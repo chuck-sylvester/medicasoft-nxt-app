@@ -1,0 +1,80 @@
+This is a contract to hire role after 6 months with Medicasoft.
+
+Title: Solution Engineer
+Location: Fully Remote
+Duration: 6 month temp to hire
+Company: MedicaSoft
+
+Job Description:
+We are seeking a Solution Engineer to serve as the primary technical partner for a key Health Information Exchange (HIE) customer using our native FHIR data platform.
+
+MedicaSoft Website: https://www.medicasoft.com
+MedicaSoft NXT Platform Info: https://www.medicasoft.com/nxt
+
+In this role, you will act as the technical point of contact supporting the customer’s success with our platform, which includes a FHIR repository, FHIR APIs, and an analytics data warehouse. You will lead technical troubleshooting, guide architectural discussions, and help the customer maximize the value of our interoperability and data services.
+This is an ideal position for a senior engineer or architect who enjoys working directly with customers on complex healthcare data challenges and bridging the gap between platform engineering and real-world healthcare interoperability needs.
+The ideal candidate combines strong architectural thinking with a hands-on approach to troubleshooting, implementation, and operational support. They take ownership of customer outcomes, proactively drive issues to resolution, and are comfortable working directly within APIs, data pipelines, cloud environments, and interoperability workflows to diagnose and solve problems.
+
+Success Profile:
+The successful candidate will:
+Take ownership of problems and follow them through to completion.
+Be comfortable moving between architecture discussions and hands-on technical execution.
+Comfortable writing queries, scripts, or lightweight tooling to investigate issues, validate integrations, and improve operational workflows.
+Demonstrate persistence, urgency, and accountability in customer-facing situations.
+Build trust with both customers and internal teams through reliability and consistent follow-through.
+Thrive in environments where initiative, adaptability, and independent problem-solving are critical.
+
+Key Responsibilities:
+Strategic Customer Technical Leadership
+Serve as the technical lead for a major HIE customer engagement.
+Build trusted relationships with customer technical teams, architects, and operational stakeholders.
+Act as the primary escalation point for complex technical and data-related issues.
+Provide ongoing guidance on best practices for leveraging our FHIR-native platform.
+Solution Architecture & Platform Enablement
+Lead solution-oriented discussions to help the customer optimize use of:
+FHIR repository and resource persistence
+FHIR REST APIs and interoperability workflows
+Analytics data warehouse integration and reporting
+Support architectural planning for new customer initiatives, integrations, and enhancements.
+Translate customer needs into actionable technical recommendations and internal follow-up.
+Work directly with APIs, FHIR payloads, cloud infrastructure, data pipelines, and platform configurations to validate implementations and resolve operational issues.
+Partner with engineering teams on technical improvements, automation opportunities, monitoring enhancements, and operational scalability.
+Troubleshooting & Data Issue Resolution
+Investigate and resolve complex healthcare data issues involving:
+FHIR resource integrity and mapping
+Data ingestion and transformation pipelines
+Terminology and code set alignment
+Downstream analytics and reporting consistency
+Collaborate with internal engineering teams to diagnose platform behaviors and deliver timely resolutions.
+Develop root cause analyses and corrective action plans for recurring issues.
+Perform hands-on investigation and validation within platform environments, APIs, logs, databases, and data pipelines to identify root causes.
+Independently drive complex technical issues through resolution rather than relying solely on escalation or delegation.
+Take ownership of customer-impacting issues from identification through remediation and communication.
+Interoperability & Healthcare Data Expertise
+Provide subject matter expertise on healthcare interoperability standards, including:
+HL7 FHIR
+US Core / USCDI requirements
+HL7 v2, CCDA documents, and other legacy feeds (as applicable)
+Cross-Functional Collaboration
+
+Required Qualifications:
+8+ years of experience in software engineering, solution architecture, or technical customer-facing roles.
+Strong expertise in API-based platforms and data-driven systems.
+Hands-on experience with FHIR and healthcare interoperability concepts.
+Ability to troubleshoot complex data workflows across operational and analytics environments.
+Experience working with cloud-based systems and modern data architectures.
+Strong communication skills with the ability to explain technical concepts to customer and internal audiences.
+Demonstrated track record of taking ownership of complex technical and customer issues and driving them to successful resolution.
+Strong hands-on technical troubleshooting skills across APIs, cloud systems, data pipelines, integrations, and production environments.
+Comfortable working directly with technical tooling, logs, configurations, queries, and operational systems rather than operating solely at a coordination or advisory level.
+Self-directed and proactive with the ability to manage priorities, follow through on commitments, and operate with minimal oversight.
+
+Preferred Qualifications:
+Direct experience supporting an HIE, payer, provider network, or interoperability platform.
+Familiarity with FHIR server implementations or frameworks (HAPI, Firely, Smile CDR, etc.).
+Experience with healthcare analytics pipelines and warehouse ecosystems (Snowflake, Redshift, BigQuery, etc.).
+Understanding of security and compliance in healthcare environments (HIPAA, SOC2).
+
+Technical Recruiter
+Falcon IT & Staffing Solutions 
+https://www.falconitss.com

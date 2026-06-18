@@ -1,0 +1,48 @@
+# NXT-approximation lab: HAPI FHIR R4 server backed by Postgres.
+# HAPI's REST surface mirrors MedicaSoft NXT's "FHIR repository + FHIR APIs".
+# The Postgres backend lets you also peek at how a JPA FHIR server persists
+# resources relationally (NXT uses Couchbase, but the relational view is
+# instructive for the analytics/consistency side of the job).
+#
+#   docker compose up -d
+#   open http://localhost:8080/         (HAPI tester UI)
+#   base URL for REST calls: http://localhost:8080/fhir
+
+services:
+  hapi-fhir:
+    image: hapiproject/hapi:latest
+    container_name: nxt-lab-hapi
+    restart: on-failure
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_DATASOURCE_URL: "jdbc:postgresql://hapi-db:5432/hapi"
+      SPRING_DATASOURCE_USERNAME: "admin"
+      SPRING_DATASOURCE_PASSWORD: "admin"
+      SPRING_DATASOURCE_DRIVER_CLASS_NAME: "org.postgresql.Driver"
+      HIBERNATE_DIALECT: "ca.uhn.fhir.jpa.model.dialect.HapiFhirPostgresDialect"
+      # Default FHIR version for this image is already R4.
+      # To validate against US Core profiles server-side, mount an
+      # application.yaml that loads the US Core IG package (see README).
+    depends_on:
+      hapi-db:
+        condition: service_healthy
+
+  hapi-db:
+    image: postgres:16-alpine
+    container_name: nxt-lab-db
+    restart: always
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: hapi
+    volumes:
+      - hapi_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d hapi"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  hapi_pgdata:

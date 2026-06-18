@@ -1,3 +1,27 @@
-.zig-cache/
-zig-out/
-*.o
+# ---------------------------------------
+# Main application-wide .gitignore
+# ---------------------------------------
+
+# macOS files
+.DS_Store
+
+# VS Code config files
+.vscode
+
+# Python
+pycache/ *.pyc
+__pycache__/
+.cache/
+
+# Environments
+.env
+env/
+venv
+.venv
+venv/
+.venv/
+venv.bak/
+
+# Files created on OCI
+nohup.out
+uvicorn.log
