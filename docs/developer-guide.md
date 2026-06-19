@@ -383,6 +383,7 @@ medicasoft-nxt-app/
 │
 ├── lib/                        # Shared Python utilities
 │   ├── __init__.py
+│   ├── config.py               # Settings (pydantic-settings BaseSettings) — added in Phase 5
 │   ├── fhir_client.py          # FHIR_BASE, HEADERS, get_all(), server_validate()
 │   └── smart_client.py         # SmartFhirClient — token acquisition, caching, Bearer injection
 │
@@ -402,8 +403,9 @@ medicasoft-nxt-app/
 │   ├── test_us_core.py         # US Core element/extension checks
 │   └── test_terminology.py     # CodeSystem census assertions
 │
-├── data/                       # Synthea FHIR output (gitignored)
-│   └── fhir/
+├── data/                       # Generated data (gitignored)
+│   ├── fhir/                   # Synthea FHIR bundles
+│   └── analytics/              # Parquet exports — derived from FHIR data (Phase 4)
 │
 └── docs/
     └── developer-guide.md      # This document
@@ -430,9 +432,42 @@ The project uses pip (not uv) for package management. Before implementing any ph
 
 ### `python-dotenv` + `.env`
 
-Rather than exporting `FHIR_BASE` as a shell variable before every script run, load it from `.env` at the start of each script and notebook. The `.env` file is already gitignored. The pattern: in `lib/fhir_client.py`, call `load_dotenv()` at import time so every consumer gets it automatically.
+**What it does and why it exists**
 
-A `.env` file also makes it trivial to switch between local HAPI and a remote staging endpoint without changing code — exactly how you'd work against a customer's environment.
+Rather than exporting `FHIR_BASE` as a shell variable before every script run, store configuration in a `.env` file at the repo root and load it at startup. `python-dotenv`'s `load_dotenv()` function reads the file and pushes each key-value pair into `os.environ` — after that, the rest of the code reads `os.environ.get("FHIR_BASE")` exactly as it would if you had set the variable in your shell.
+
+The `.env` file is gitignored. It also makes it trivial to switch between the local Docker stack and a remote staging endpoint without changing code — just update the file. This matches how you'd work against a customer's environment: the codebase is identical; only the configuration changes.
+
+**`.env` file format**
+
+One `KEY=VALUE` pair per line. Comments start with `#`. No quotes are needed for simple values; `python-dotenv` strips leading and trailing whitespace.
+
+```
+# MedicaSoft NXT lab configuration
+FHIR_BASE=http://localhost:8080/fhir
+```
+
+Conventions to know:
+- Keys are case-sensitive (`FHIR_BASE` ≠ `fhir_base`). By convention, environment variable names use `UPPER_SNAKE_CASE`.
+- `python-dotenv` will **not** override a variable that is already set in `os.environ` — the shell wins over the file. This is intentional: you can override a `.env` value for a single run by setting the variable inline (`FHIR_BASE=http://staging:8080/fhir python scripts/validate.py`) without editing the file.
+- Values with spaces should be quoted: `SOME_VALUE="hello world"`
+- Empty values are valid: `OPTIONAL_VAR=`
+
+**How `load_dotenv()` works**
+
+`load_dotenv()` opens `.env`, parses each non-comment non-blank line as `KEY=VALUE`, and calls `os.environ.setdefault(KEY, VALUE)` for each pair. `setdefault` only sets the variable if it is not already in `os.environ` — that is what gives the shell-wins behavior described above.
+
+Call `load_dotenv()` at the top of `lib/fhir_client.py`, before reading any environment variable. Because Python caches module imports, this happens exactly once per interpreter session. Any script or notebook that does `from lib.fhir_client import FHIR_BASE` gets the benefit automatically — you do not need to call `load_dotenv()` in every script.
+
+**Security notes**
+
+- Never commit `.env`. After Phase 5 it will contain `CLIENT_SECRET`. Verify it is gitignored before that phase: `git check-ignore -v .env`
+- Keep a committed `.env.example` (no real values) so collaborators know which variables to set
+- Never hardcode secrets in `lib/*.py` — always read from the environment
+
+**Scope of use: Phases 0–4 only**
+
+`python-dotenv` is the right tool for the simple, single-variable configuration of Phases 0–4. Phase 5 introduces four new variables with type constraints and interdependencies that justify upgrading to `pydantic-settings` — a higher-level library built on top of `python-dotenv` that adds typed fields, validation, and a single configuration object importable by all modules. See Step 5.1 for that migration.
 
 ### `httpx` (sync, not async)
 
@@ -465,7 +500,10 @@ DuckDB is an in-process analytical SQL engine. No server, no setup — just `imp
 
 Notebooks run in the `.venv` kernel. Install `jupyter` in `requirements-dev.txt`, then register the kernel: `python -m ipykernel install --user --name=nxt-lab`. This ensures notebooks use the project's venv. Notebooks import from `lib/` the same way scripts do — the project root needs to be on the Python path, which you can do with a `.pth` file or a one-line `sys.path.insert` in the notebook.
 
----
+<br><br><br><br><br>
+
+# MedicaSoft NXT Lab
+Implementation
 
 ## Phase 0 — Foundation
 
@@ -481,9 +519,48 @@ Decide what belongs in each. Runtime (what scripts need to run): `httpx`, `pytho
 
 Think about: should a user who only wants to run `load_synthea.py` need to install duckdb? No. That's the split.
 
+`python-dotenv` belongs in `requirements.txt` (runtime), not `requirements-dev.txt`, because every script and notebook reads from `.env`. A user running only `load_synthea.py` still needs `.env` loaded — they should not need dev dependencies for that. When Phase 5 adds `pydantic` and `pydantic-settings`, those also go in `requirements.txt` for the same reason: they are part of the runtime configuration layer, not development tooling.
+
 ### Step 0.3 — `.env` file
 
-Create `.env` at the repo root (it's already gitignored). Define `FHIR_BASE=http://localhost:8080/fhir`. This is the only value you need for now — you'll add auth variables in Phase 5.
+**Create the file**
+
+Create `.env` at the repo root. It is already in `.gitignore` — verify this before adding any secrets in Phase 5: `git check-ignore -v .env` should print the file path. For Phase 0, the file contains one variable:
+
+```
+FHIR_BASE=http://localhost:8080/fhir
+```
+
+This is the only variable you need for Phases 0–4. Phase 5 adds four Keycloak variables after the realm is configured; see Step 5.1.
+
+**How `python-dotenv` reads it**
+
+`load_dotenv()` reads each `KEY=VALUE` line and calls `os.environ.setdefault(KEY, VALUE)`. The `setdefault` call is the important detail: it only sets the variable if it is not already present in `os.environ`. This means the shell always wins over `.env`. If `FHIR_BASE` is already exported in your shell, `load_dotenv()` leaves it alone.
+
+The practical consequence: to point a single script run at a different FHIR server without editing `.env`, set the variable inline:
+
+```bash
+FHIR_BASE=http://staging:8080/fhir python scripts/validate.py
+```
+
+No file change, no code change. This is how you'd connect to a customer's environment during an investigation.
+
+**`.env.example` (recommended)**
+
+Commit a `.env.example` file (no real values) to document which variables are expected:
+
+```
+# Copy to .env and fill in values
+FHIR_BASE=http://localhost:8080/fhir
+
+# Phase 5 additions — fill in after Keycloak is configured (see Step 5.1):
+# KEYCLOAK_TOKEN_URL=
+# CLIENT_ID=
+# CLIENT_SECRET=
+# SMART_SCOPE=system/*.read
+```
+
+`.env.example` is safe to commit because it contains no secrets. It gives collaborators a starting point and documents the full variable set across all phases in one place.
 
 ### Step 0.4 — Project folder structure
 
@@ -499,6 +576,14 @@ This is the most important step in Phase 0. Design a shared module that:
 2. Defines `FHIR_BASE` and `HEADERS` as module-level constants (or a simple config object).
 3. Implements `get_all(client, resource_type, **params) -> list[dict]` — the pagination helper from `validate.py`, now extracted so every script can import it. Key detail: the function must clear `params` after the first request, because HAPI encodes the full cursor into the `next` link URL — re-sending the original params on subsequent requests resets the cursor.
 4. Implements `server_validate(client, resource) -> dict` — posts to `/{resourceType}/$validate` and returns the OperationOutcome.
+
+**Why `load_dotenv()` at module level, not inside `main()`**
+
+Calling `load_dotenv()` at the top of `lib/fhir_client.py` — outside any function — means it runs the first time Python imports the module, and only then (Python caches module imports). Any script or notebook that does `from lib.fhir_client import FHIR_BASE` triggers the call automatically. You never need to call `load_dotenv()` in `load_synthea.py`, `validate.py`, or a notebook.
+
+Compare this to placing `load_dotenv()` inside `main()`: it would only run when the script is executed directly (`python scripts/validate.py`), not when the module is imported by a test or notebook. Module-level placement is more reliable for a shared library.
+
+Note also that `os.environ.get("FHIR_BASE", "http://localhost:8080/fhir")` keeps a default value even though `load_dotenv()` is called first. The default is a safety net for environments where `.env` does not exist — such as CI pipelines that inject environment variables directly rather than via a file. It is not a fallback you expect to need in the local lab.
 
 After this step, `validate.py` should import from `lib.fhir_client` rather than defining these locally.
 
@@ -654,6 +739,10 @@ Produce a combined table: resource type → system → count. This is the artifa
 
 ---
 
+<br><br><br><br><br><br>
+<br><br><br><br><br><br>
+<br>
+
 ## Phase 3 — pytest Data-Quality Suite
 
 *Goal: convert the validate.py checks and notebook analyses into a repeatable, maintainable test suite.*
@@ -726,6 +815,192 @@ Consider adding a `Makefile` target: `make test` that activates the venv and run
 
 *Goal: flatten FHIR resources into a queryable SQL layer and demonstrate reporting-consistency investigation.*
 
+### 4.0 Background: DuckDB's Storage Model and the Parquet Ecosystem
+
+Read this section before opening the notebook. The concepts here explain why the DuckDB queries in Step 4.2 look the way they do, why `UNNEST` is needed for FHIR's nested arrays, and why Parquet is the natural persistence format for the analytics layer.
+
+#### Row-oriented vs. column-oriented storage
+
+A traditional OLTP database (Postgres, MySQL, SQL Server) stores data **row by row**. On disk, a page contains complete rows packed together: `(id, resourceType, subject_reference, code_system, code_code, clinicalStatus, onsetDate, ...)`. This layout is optimal for OLTP workloads — point lookups (`SELECT * FROM condition WHERE id = 'abc'`) read one row and get all columns, and INSERTs append one row to one page.
+
+Analytical workloads are different. `SELECT code_system, COUNT(*) FROM conditions GROUP BY code_system` needs only one column. With row-oriented storage, reading that column means reading every field of every row — including `id`, `subject_reference`, `onsetDate`, and everything else — just to extract `code_system`. For 100,000 Conditions with 15 fields, roughly 93% of the data read is discarded.
+
+**DuckDB is column-oriented.** Each column is stored as its own contiguous block. The same `GROUP BY code_system` query reads only the `code_system` column block — nothing else is touched.
+
+The tradeoff is writes: inserting one row requires appending to N column blocks. DuckDB is not designed for concurrent OLTP writes. It is designed for exactly the analytical read pattern this phase demonstrates — scanning and aggregating large numbers of resources with only a few columns selected.
+
+**Compression is a direct consequence of columnar layout.** Within a column of FHIR Conditions, `resourceType` is always `"Condition"`. `code.coding[0].system` might be `http://snomed.info/sct` for 95% of rows. Homogeneous values within a single column compress dramatically better than mixed-type row pages. DuckDB applies three encoding strategies before any file-level compression:
+
+- **Run-length encoding (RLE)**: 10,000 consecutive `"Condition"` values are stored as `("Condition", 10000)` — one entry
+- **Dictionary encoding**: 6 distinct CodeSystem URIs across millions of rows → a 6-entry dictionary; each value becomes a 3-bit index
+- **Delta encoding**: for sorted integers and timestamps, store the difference between consecutive values rather than absolute values
+
+These encodings are why analytical databases and formats like Parquet achieve 5–20× compression ratios over row-oriented JSON or CSV on typical FHIR data.
+
+#### DuckDB's native type system for nested data
+
+This is where DuckDB most visibly diverges from traditional SQL, and it maps directly to FHIR's nested structure.
+
+**The traditional SQL approach: normalization**
+
+In Postgres, `Patient.name` (an array of `HumanName` objects, each with `family`, `given[]`, `use`) would require a separate table:
+
+```sql
+CREATE TABLE patient (id VARCHAR PRIMARY KEY, birthDate DATE, ...);
+CREATE TABLE patient_name (patient_id VARCHAR REFERENCES patient(id), use VARCHAR, family VARCHAR);
+CREATE TABLE patient_name_given (patient_name_id INT REFERENCES patient_name(id), given_value VARCHAR);
+```
+
+Querying a patient's family name requires two joins. FHIR has dozens of nested arrays (`identifier[]`, `name[]`, `address[]`, `telecom[]`, `code.coding[]`, `component[]` on Observations) — fully normalizing it produces 50+ tables with complex join paths.
+
+**DuckDB's `LIST` and `STRUCT` types**
+
+DuckDB has `LIST` (variable-length ordered array) and `STRUCT` (named, typed record) as first-class column types. `read_json_auto()` infers these automatically from FHIR JSON:
+
+```sql
+DESCRIBE SELECT * FROM read_json_auto('patients.json');
+-- name          | VARCHAR
+-- birthDate     | DATE
+-- identifier    | STRUCT(system VARCHAR, value VARCHAR)[]    ← LIST of STRUCT
+-- name          | STRUCT(use VARCHAR, family VARCHAR, given VARCHAR[])[]
+-- address       | STRUCT(line VARCHAR[], city VARCHAR, state VARCHAR, postalCode VARCHAR)[]
+```
+
+No separate tables, no schema definition, no joins. You navigate nested fields with dot notation and 1-based array subscripts:
+
+```sql
+SELECT
+    identifier[1].value    AS mrn,
+    name[1].family         AS family_name,
+    address[1].city        AS city
+FROM read_json_auto('patients.json')
+```
+
+**`UNNEST` — expanding arrays into rows**
+
+For aggregation across the elements of a list, `UNNEST()` explodes a `LIST` into one row per element — the DuckDB equivalent of joining against a normalized sub-table:
+
+```sql
+-- Count which CodeSystems appear across all Conditions
+SELECT coding.system, COUNT(*) AS n
+FROM conditions,
+UNNEST(code.coding) AS coding
+GROUP BY coding.system
+ORDER BY n DESC
+```
+
+The equivalent query against a traditional normalized schema:
+
+```sql
+SELECT ccc.system, COUNT(*) AS n
+FROM conditions c
+JOIN condition_code_coding ccc ON c.id = ccc.condition_id
+GROUP BY ccc.system
+ORDER BY n DESC
+```
+
+Same result. The DuckDB version requires no pre-normalization and operates directly on the FHIR JSON shape. The terminology census in `validate.py` uses Python to do this same traversal manually — Section A of the notebook replaces that with a single `UNNEST` query.
+
+**DuckDB's full type system for FHIR**
+
+| Type | Description | FHIR mapping |
+|---|---|---|
+| `LIST` | Variable-length ordered array | `Patient.name[]`, `code.coding[]`, `identifier[]`, `Observation.component[]` |
+| `STRUCT` | Named typed record with fixed fields | `HumanName`, `CodeableConcept`, `Quantity`, `Reference` |
+| `MAP` | Key-value pairs with homogeneous value types | Extension maps with arbitrary string keys |
+| `UNION` | One of several possible types | FHIR's `value[x]` polymorphic fields (`valueString`, `valueQuantity`, `valueCodeableConcept`) |
+
+Traditional relational SQL has none of these as native column types. Postgres has `text[]` arrays, but without nested STRUCT fields and without the lateral-join-style `UNNEST` DuckDB provides.
+
+#### Vectorized execution
+
+Traditional SQL engines use the **Volcano model**: each operator (Scan, Filter, Join, Aggregate) has a `next()` method that returns one row at a time to its parent. To process 1M rows, the Aggregate calls `next()` on the Filter 1M times; the Filter calls `next()` on the Scan 1M times. Every call is a virtual function dispatch. For complex queries with multiple operators, the overhead compounds.
+
+DuckDB uses **vectorized execution**. Each operator processes a *vector* of ~2,048 values at once. The SUM aggregate receives 2,048 `code_system` values, processes them in a tight loop that fits in CPU cache, and the CPU can apply SIMD instructions — one instruction operating on 8 or 16 values simultaneously. Per-row overhead drops by roughly two orders of magnitude compared to the Volcano model.
+
+For 25 patients the difference is imperceptible. At the scale of NXT's production data — millions of FHIR resources per customer — vectorized, columnar execution is the difference between a sub-second query and one that times out. The same principle drives Redshift's architecture.
+
+#### Apache Parquet — the analytical file format
+
+DuckDB is an engine; Parquet is a file format. They pair naturally but serve different purposes and can be used independently.
+
+**What Parquet is**
+
+Apache Parquet (2013, developed from a Google Dremel paper) is a **column-oriented file format** — the same logical layout as DuckDB's in-memory columnar storage, but serialized to disk or object storage (S3, GCS, Azure Blob). It is the standard interchange format in modern analytical pipelines: Spark, dbt, Databricks, AWS Glue, and Redshift's `COPY` command all read and write Parquet natively.
+
+**Physical structure**
+
+```
+file.parquet
+├── Row Group 1  (horizontal slice of rows, typically ~128 MB)
+│   ├── Column Chunk: id            (all id values in this row group, compressed)
+│   ├── Column Chunk: code_system   (dictionary-encoded + Zstd compressed)
+│   ├── Column Chunk: subject_ref   (...)
+│   └── ...
+├── Row Group 2
+│   └── ...
+└── Footer  (schema + min/max/null statistics per column per row group)
+```
+
+The **footer** is what makes Parquet analytically powerful. Before reading any data, a query engine reads the footer to learn the schema and, for every column in every row group, the **minimum value, maximum value, and null count**. These statistics allow entire row groups to be skipped without touching their data:
+
+```
+WHERE birthDate > '1990-01-01'
+
+Footer says:
+  Row Group 1: birthDate min='1945-03-12', max='1987-11-29'  → SKIP entirely
+  Row Group 2: birthDate min='1962-08-05', max='2005-04-17'  → READ
+  Row Group 3: birthDate min='1988-01-01', max='1999-12-31'  → READ
+```
+
+This is called **predicate pushdown** — filtering at the file-metadata level, not after loading data into memory. For selective queries over large files, this can eliminate 80–90% of I/O.
+
+**Encoding within column chunks**
+
+Before the compression codec (Snappy, Zstd, Gzip, LZ4) is applied, Parquet encodes each column chunk using the same strategies DuckDB uses in memory — dictionary encoding, RLE, delta encoding — chosen automatically per column based on data characteristics. For FHIR data where `resourceType` is constant and CodeSystem URIs are highly repetitive, the encoding alone achieves 10–30× size reduction before compression.
+
+**Nested data in Parquet**
+
+Parquet uses Dremel **repetition and definition levels** to store nested and repeated fields without flattening them. Every value in a repeated field (like `code.coding[].system`) carries two small integers: a repetition level (which nesting level this repetition begins at) and a definition level (how deep into the nesting the value is defined). These levels allow full reconstruction of the nested structure from flat columnar storage. FHIR's nested arrays are representable natively without normalization.
+
+**DuckDB writes and reads Parquet in one line**
+
+```python
+# Write
+duckdb.execute("""
+    COPY (SELECT * FROM conditions)
+    TO 'data/analytics/conditions.parquet'
+    (FORMAT PARQUET, COMPRESSION ZSTD)
+""")
+
+# Read
+duckdb.execute("SELECT * FROM 'data/analytics/conditions.parquet'")
+```
+
+No `pyarrow`, no Spark, no additional library beyond DuckDB itself.
+
+**Where Parquet fits in the NXT architecture**
+
+The path from NXT's FHIR repository to Redshift passes through object storage:
+
+```
+NXT FHIR (Couchbase) → ETL job → S3 (Parquet files) → Redshift COPY → BI queries
+```
+
+Parquet is the standard interchange at every step: the ETL writes it; Redshift reads it via `COPY`; dbt models query it. In this lab the pipeline is:
+
+```
+HAPI FHIR → get_all() → DuckDB in-memory → COPY TO Parquet → query from Parquet
+                                                                 ↕
+                                            [in production: S3 Parquet → Redshift COPY]
+```
+
+Same pattern, local scale. Building the Parquet layer in Phase 4 makes the architectural analogy concrete rather than theoretical.
+
+> **Role relevance:** When a customer reports that their Redshift queries are slow despite the data looking correct, the answer often involves predicate pushdown — either the data was not written in an order that makes the footer min/max statistics useful, or the partition scheme does not align with the query filter columns. Being able to read a file's footer statistics (`parquet_metadata()` in DuckDB) and explain what the query planner is and is not skipping is a concrete diagnostic skill. It is also the correct vocabulary for conversations with a customer's data engineering team about their pipeline.
+
+---
+
 ### Step 4.1 — Understand what you're simulating
 
 NXT's analytics architecture: the FHIR repository (Couchbase) feeds a Redshift data warehouse. The recurring customer ticket is: "the warehouse count for Condition doesn't match the API count." The cause is usually one of:
@@ -739,14 +1014,49 @@ Your local DuckDB leg lets you simulate scenarios 2–4 directly.
 
 ### Step 4.2 — Notebook: analytics (`04_analytics_duckdb.ipynb`)
 
-**Section A — Loading FHIR JSON into DuckDB**
+**Section A — Loading FHIR JSON into DuckDB and persisting to Parquet**
 
-Fetch Conditions from the FHIR API (using `get_all()`) and load them into DuckDB. Understand `read_json_auto()` — DuckDB infers the schema from the JSON. FHIR's nested arrays (like `code.coding`) require unnesting.
+Fetch Conditions and Observations from the FHIR API (using `get_all()`), load them into DuckDB, and immediately write them to Parquet. All subsequent sections of the notebook read from the Parquet files rather than calling the API again — this decouples the analytics work from a running HAPI instance and establishes the write-once-read-many pattern that mirrors a real pipeline.
+
+The load-and-persist sequence:
+
+```python
+import duckdb, json
+
+con = duckdb.connect()
+
+# Fetch from FHIR API
+conditions   = get_all(client, "Condition")
+observations = get_all(client, "Observation")
+
+# Load into DuckDB (read_json_auto infers LIST and STRUCT types from the JSON shape)
+con.execute("CREATE TABLE conditions   AS SELECT * FROM read_json_auto(?)", [json.dumps(conditions)])
+con.execute("CREATE TABLE observations AS SELECT * FROM read_json_auto(?)", [json.dumps(observations)])
+
+# Persist to Parquet — derived data, gitignored alongside data/fhir/
+con.execute("""
+    COPY conditions   TO 'data/analytics/conditions.parquet'   (FORMAT PARQUET, COMPRESSION ZSTD)
+""")
+con.execute("""
+    COPY observations TO 'data/analytics/observations.parquet' (FORMAT PARQUET, COMPRESSION ZSTD)
+""")
+```
+
+After this cell, all subsequent analysis reads from the Parquet files:
+
+```python
+# Subsequent cells use Parquet, not the FHIR API
+con.execute("CREATE VIEW conditions   AS SELECT * FROM 'data/analytics/conditions.parquet'")
+con.execute("CREATE VIEW observations AS SELECT * FROM 'data/analytics/observations.parquet'")
+```
+
+Use `DESCRIBE` to inspect the inferred schema and understand how `read_json_auto()` mapped FHIR's nested arrays to `LIST(STRUCT(...))` types — compare it to what you would have written as normalized tables in Postgres.
 
 Key DuckDB functions for FHIR:
-- `json_extract()` / `->` operator for navigating nested JSON
-- `UNNEST()` for expanding arrays (e.g., expand `code.coding` into rows)
-- `list_aggregate()` for working with JSON arrays
+- `UNNEST()` for expanding arrays into rows (e.g., `code.coding[]` → one row per coding)
+- `list[n]` for accessing a specific array element by 1-based index
+- `.field` notation for navigating into a STRUCT field
+- `json_extract()` / `->` operator for navigating fields that were loaded as raw JSON rather than typed STRUCT
 
 **Section B — Reporting-consistency queries**
 
@@ -766,14 +1076,96 @@ Write one ViewDefinition by hand for `Condition` — it specifies column names a
 
 **Section D — Redshift dialect notes**
 
-Document the differences you'd encounter moving from DuckDB to Redshift:
-- DuckDB: `UNNEST(code.coding)` — Redshift: `SELECT ... FROM ... CROSS JOIN UNNEST(code.coding) AS t(coding_element)`
-- DuckDB: `read_json_auto()` — Redshift: SUPER type with `json_parse()`
-- DuckDB: `->` operator — Redshift: `json_extract_path_text()`
+Document the differences you'd encounter moving from DuckDB to Redshift. The root cause of all three differences is the same: DuckDB has native `LIST` and `STRUCT` column types (see §4.0), so it can represent FHIR's nested arrays as first-class values. Redshift uses the `SUPER` type — a semi-structured JSON blob column — and requires explicit extraction functions.
 
-This table is a useful reference when the SQL needs to run in the actual warehouse.
+| Operation | DuckDB | Redshift |
+|---|---|---|
+| Expand a nested array into rows | `UNNEST(code.coding)` | `CROSS JOIN UNNEST(code.coding) AS t(coding_element)` |
+| Load from raw JSON | `read_json_auto()` | `SUPER` type with `json_parse()` |
+| Navigate a nested field | `->` operator or `.field` notation | `json_extract_path_text()` |
+| Read from Parquet | `read_parquet('s3://...')` | `COPY ... FROM 's3://...' FORMAT PARQUET` |
+
+Add the Parquet row to document the full pipeline: DuckDB reads Parquet directly as a query source; Redshift ingests Parquet from S3 via a `COPY` command into a permanent table. The query against that table is then standard SQL — no JSON extraction needed once the data is loaded.
 
 > **Role relevance:** Being able to reproduce a reporting-consistency discrepancy end-to-end — pull from the API, load into SQL, run the warehouse query, and find the filter that explains the count difference — is a direct demonstration of "analytics warehouse integration and reporting consistency" from the PD.
+
+**Section E — Parquet: persistence, inspection, and predicate pushdown**
+
+This section uses the Parquet files written in Section A. It builds the habit of inspecting the file format itself — not just querying it — which is the skill that transfers to diagnosing pipeline issues in production.
+
+*Part 1 — Inspect file metadata*
+
+DuckDB exposes Parquet internals through two table-valued functions:
+
+```sql
+-- Schema: column names, types, repetition, encodings
+SELECT * FROM parquet_schema('data/analytics/conditions.parquet');
+
+-- Row group statistics: min/max per column, compression codec, compressed/uncompressed sizes
+SELECT * FROM parquet_metadata('data/analytics/conditions.parquet');
+```
+
+Work through the output of both. Answer these questions as you read it:
+- How many row groups does the file have? (With 25 patients there will be one — note how the count scales with data volume.)
+- What compression codec was applied to each column? (Zstd, as specified in the `COPY` statement.)
+- What are the min and max values for `onsetDateTime`? These are the statistics a query planner uses for predicate pushdown — verify they match the range you'd expect from the Synthea data.
+- Which columns have the highest compression ratio (uncompressed / compressed size)? Compare `resourceType` (constant — extreme compression) against `id` (unique per row — minimal compression). This makes the columnar compression argument concrete.
+
+*Part 2 — Observe predicate pushdown*
+
+Use DuckDB's `EXPLAIN` to see the query plan before and after a filter:
+
+```sql
+-- Full scan
+EXPLAIN SELECT code_system, COUNT(*) FROM 'data/analytics/conditions.parquet'
+GROUP BY code_system;
+
+-- Filtered scan
+EXPLAIN SELECT code_system, COUNT(*) FROM 'data/analytics/conditions.parquet'
+WHERE onsetDateTime > '1990-01-01'
+GROUP BY code_system;
+```
+
+Look for `Parquet Scan` in the plan output. In the filtered version, DuckDB annotates which row groups it can skip based on footer statistics. With only one row group (25 patients), no skipping occurs — but the planner still reads and evaluates the footer. Add a note about what you'd expect at scale: 10 million Conditions split into 80 row groups, each covering a date range. A query filtering to the last 2 years might skip 70 of 80 row groups entirely.
+
+*Part 3 — Compare file sizes*
+
+```python
+import os
+
+json_size    = len(json.dumps(conditions).encode())
+parquet_size = os.path.getsize('data/analytics/conditions.parquet')
+print(f"JSON:    {json_size:,} bytes")
+print(f"Parquet: {parquet_size:,} bytes")
+print(f"Ratio:   {json_size / parquet_size:.1f}×")
+```
+
+With Synthea Conditions, expect a 3–8× compression ratio even at small scale. At production FHIR volume (millions of resources), the ratio typically reaches 10–20× for columnar data with repetitive CodeSystem URIs and resource types. Document the ratio you observe and explain it using what you know about dictionary encoding and the `code.coding.system` field.
+
+*Part 4 — The architecture note*
+
+Close this section with an explicit architecture diagram in prose:
+
+```
+This lab:
+  HAPI FHIR API
+      ↓  get_all()
+  DuckDB in-memory
+      ↓  COPY TO Parquet
+  data/analytics/*.parquet
+      ↓  read_parquet() / CREATE VIEW
+  DuckDB queries (Sections B–D)
+
+NXT production:
+  NXT FHIR API (Couchbase)
+      ↓  ETL job (AWS Glue / custom)
+  S3 (*.parquet, partitioned by resource type + date)
+      ↓  Redshift COPY or Spectrum
+  Redshift tables / external tables
+      ↓  BI queries (Tableau, dbt, etc.)
+```
+
+The Parquet layer is where "FHIR data in motion" becomes "FHIR data at rest for analysis." Understanding what is in that layer — its schema, its statistics, its compression — is understanding the handoff point between the FHIR platform and the warehouse that the SE role straddles.
 
 ---
 
@@ -863,7 +1255,7 @@ A JSON Web Token (JWT, RFC 7519) is the access token format used in this stack. 
 6. Check `aud` — reject if audience doesn't include this server
 7. Check `scope` — reject if required scope is absent
 
-Steps 5–6 are the most common misconfiguration points. In a local lab with Docker networking, the `iss` claim (set by Keycloak using its external URL) and the issuer HAPI is configured to expect (reachable from inside Docker) are often different addresses for the same server. This is covered in Step 5.3.
+Steps 5–6 are the most common misconfiguration points. In a local lab with Docker networking, the `iss` claim (set by Keycloak using its external URL) and the issuer HAPI is configured to expect (reachable from inside Docker) are often different addresses for the same server. This is covered in Step 5.4.
 
 You can inspect any JWT without a library: split on `.`, base64url-decode the middle segment (padding with `=` as needed), and `json.loads()` the result. This is a diagnostic technique worth knowing because you'll often need to inspect a customer's token in the field without installing anything.
 
@@ -960,7 +1352,135 @@ Keycloak is an open-source Identity and Access Management (IAM) platform. For th
 
 ---
 
-### Step 5.1 — Review `docker-compose.yml` and enable HAPI's SMART wiring
+### Step 5.1 — Migrate configuration to `pydantic-settings`
+
+**Why this step exists here**
+
+For Phases 0–4, a single environment variable (`FHIR_BASE`) plus `load_dotenv()` is sufficient. At Phase 5, four new variables appear — `KEYCLOAK_TOKEN_URL`, `CLIENT_ID`, `CLIENT_SECRET`, and `SMART_SCOPE` — and they are all required for the Client Credentials flow to work. With the `python-dotenv` approach, a missing `CLIENT_SECRET` doesn't surface until `SmartFhirClient` attempts a token request deep in execution, producing a confusing HTTP 401 rather than a clear configuration error. This is the natural inflection point to upgrade from scattered `os.environ.get()` calls to a typed configuration class that validates all required values at startup.
+
+**What `pydantic-settings` is**
+
+`pydantic-settings` is a small extension package (separate from `pydantic` itself) that lets you define configuration as a typed Python class. You subclass `BaseSettings`, declare fields with type annotations and defaults, and the class automatically reads from environment variables — and optionally from a `.env` file — when it is instantiated. Validation uses Pydantic's model system: if a required field is missing or a value fails its type constraint, you get a clear `ValidationError` at import time rather than a runtime crash twenty lines into execution.
+
+The `BaseSettings` class was part of `pydantic` in v1 but was extracted into the separate `pydantic-settings` package in Pydantic v2. Older examples use `from pydantic import BaseSettings` — that is v1. This project uses Pydantic v2: `from pydantic_settings import BaseSettings`.
+
+**Update `requirements.txt`**
+
+Add both packages:
+
+```
+pydantic>=2.0
+pydantic-settings>=2.0
+```
+
+`pydantic-settings` uses `python-dotenv` internally when configured to read a `.env` file, so you can remove `python-dotenv` as a direct dependency once the migration is complete. If any code still calls `load_dotenv()` directly (e.g., in `tests/conftest.py` before it is updated), keep the package until those call sites are migrated.
+
+**Create `lib/config.py`**
+
+```python
+from typing import Optional
+from pydantic import AnyHttpUrl
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+
+    # Phase 0 — always required
+    fhir_base: AnyHttpUrl = "http://localhost:8080/fhir"
+
+    # Phase 5 — required for SMART / Client Credentials; optional until Keycloak is configured
+    keycloak_token_url: Optional[AnyHttpUrl] = None
+    client_id: Optional[str] = None
+    client_secret: Optional[str] = None
+    smart_scope: str = "system/*.read"
+
+
+settings = Settings()
+```
+
+Two design decisions worth understanding:
+
+*Env var name mapping is automatic.* Pydantic Settings maps the lowercase field name `fhir_base` to the environment variable `FHIR_BASE`. You write lowercase Python attribute names; the `.env` file uses uppercase `KEY=VALUE`; the mapping is automatic and case-insensitive.
+
+*Optional fields for Phase 5 variables.* The Keycloak variables are declared `Optional[...] = None` rather than required (no default → required in Pydantic). This lets the `Settings` class be imported by `lib/fhir_client.py` from Phase 0 onward without raising a `ValidationError` when those variables are absent from `.env`. When `SmartFhirClient` actually needs them, it should assert they are not `None` with a clear error:
+
+```python
+if settings.keycloak_token_url is None:
+    raise RuntimeError("KEYCLOAK_TOKEN_URL must be set in .env — see Step 5.1")
+```
+
+This produces an actionable message rather than a `TypeError: argument of type 'NoneType' is not iterable` buried in the HTTP stack.
+
+**Migrate `lib/fhir_client.py`**
+
+Replace the `load_dotenv()` call and `os.environ.get("FHIR_BASE", ...)` with an import from `lib.config`:
+
+```python
+from lib.config import settings
+
+FHIR_BASE = str(settings.fhir_base)
+```
+
+Note the `str()` call: `settings.fhir_base` is a Pydantic `AnyHttpUrl` object, not a plain string. `httpx` accepts either, but string concatenation and f-strings require an explicit conversion.
+
+**Migrate `lib/smart_client.py`**
+
+Read all four variables from the settings object rather than from `os.environ`:
+
+```python
+from lib.config import settings
+
+# In SmartFhirClient.__init__ or the token-request method:
+token_url   = str(settings.keycloak_token_url)
+client_id   = settings.client_id
+client_secret = settings.client_secret
+scope       = settings.smart_scope
+```
+
+**Migrate `tests/conftest.py`**
+
+Replace the `os.environ.get("FHIR_BASE")` call in the shared fixture with `str(settings.fhir_base)`.
+
+**What `AnyHttpUrl` validation gives you**
+
+With `os.environ.get("FHIR_BASE", "http://localhost:8080/fhir")`, any string is accepted silently. With `fhir_base: AnyHttpUrl`, Pydantic validates that the value is a well-formed HTTP or HTTPS URL at construction time. A typo like `htp://localhost:8080/fhir` raises immediately:
+
+```
+pydantic_core._pydantic_core.ValidationError: 1 validation error for Settings
+fhir_base
+  URL scheme should be 'http' or 'https' [type=url_scheme, ...]
+```
+
+The error appears when the process starts — not when the first network call fails 30 seconds later.
+
+**`python-dotenv` vs. `pydantic-settings` — comparison**
+
+| | `python-dotenv` + `os.environ.get()` | `pydantic-settings` `BaseSettings` |
+|---|---|---|
+| `.env` loading | `load_dotenv()` call in each module | `model_config = SettingsConfigDict(env_file=...)` |
+| Type coercion | All values are strings | Automatic: `int`, `bool`, `AnyHttpUrl`, etc. |
+| Required field enforcement | Silent `None`, runtime crash | `ValidationError` at import time |
+| Optional Phase 5 variables | `os.environ.get()` returns `None` silently | Declared `Optional[...] = None`, asserted where used |
+| IDE autocomplete | None — string key lookup | Full — `settings.fhir_base` is a typed attribute |
+| Single source of truth | Scattered `os.environ.get()` calls | One `settings` object imported everywhere |
+| Readable config schema | Check each call site | One `class Settings` shows all variables |
+
+**Update `.env` for Phase 5**
+
+After completing Step 5.3 (Keycloak realm and `nxt-backend` client setup), add the Phase 5 variables to `.env`. The `CLIENT_SECRET` value comes from the Keycloak admin console after you create the `nxt-backend` client.
+
+```
+# Phase 5 — Keycloak / SMART (add after Step 5.3 is complete)
+KEYCLOAK_TOKEN_URL=http://localhost:8180/realms/nxt-lab/protocol/openid-connect/token
+CLIENT_ID=nxt-backend
+CLIENT_SECRET=<copy from Keycloak admin console → nxt-backend → Credentials tab>
+SMART_SCOPE=system/*.read
+```
+
+---
+
+### Step 5.2 — Review `docker-compose.yml` and enable HAPI's SMART wiring
 
 The `docker-compose.yml` already contains all four services (`hapi-fhir`, `hapi-db`, `keycloak`, `keycloak-db`). Read through the entire file before running anything. Understand each configuration decision before enabling auth.
 
@@ -976,13 +1496,13 @@ The `docker-compose.yml` already contains all four services (`hapi-fhir`, `hapi-
 
 *Health check*: Keycloak is slow to start (30–90 seconds). The health check on management port 9000 at `/health/ready` (enabled by `KC_HEALTH_ENABLED=true`) prevents HAPI from trying to validate tokens before Keycloak is ready. The `start_period: 90s` gives the JVM time to initialise before health checks begin.
 
-*HAPI Spring Security block*: The `docker-compose.yml` contains the HAPI SMART environment variables as comments. Do not uncomment them yet. They reference the `nxt-lab` Keycloak realm, which doesn't exist until Step 5.2. Enabling them before the realm exists will cause HAPI to fail on startup when it tries to fetch the JWKS.
+*HAPI Spring Security block*: The `docker-compose.yml` contains the HAPI SMART environment variables as comments. Do not uncomment them yet. They reference the `nxt-lab` Keycloak realm, which doesn't exist until Step 5.3. Enabling them before the realm exists will cause HAPI to fail on startup when it tries to fetch the JWKS.
 
 *HAPI dependency*: The `keycloak` dependency on the `hapi-fhir` service is also commented out for the same reason — enabling it before the realm exists would cause HAPI to wait indefinitely for a Keycloak realm that isn't configured.
 
-**What to do now:** Start the stack (`docker compose up -d`) and verify all four containers reach a healthy or running state (`docker compose ps`). Keycloak will be running but unconfigured — no realm, no clients. HAPI will start without auth enforcement. Verify HAPI is accessible at `http://localhost:8080/fhir/metadata` and Keycloak's admin console is accessible at `http://localhost:8180` before proceeding to Step 5.2.
+**What to do now:** Start the stack (`docker compose up -d`) and verify all four containers reach a healthy or running state (`docker compose ps`). Keycloak will be running but unconfigured — no realm, no clients. HAPI will start without auth enforcement. Verify HAPI is accessible at `http://localhost:8080/fhir/metadata` and Keycloak's admin console is accessible at `http://localhost:8180` before proceeding to Step 5.3.
 
-### Step 5.2 — Create the Keycloak realm and clients
+### Step 5.3 — Create the Keycloak realm and clients
 
 Do this through Keycloak's Admin Console at `http://localhost:8180`. Keycloak also supports a REST API and realm export/import (JSON), which is the repeatable approach — but use the console first to understand the model before scripting it.
 
@@ -1026,7 +1546,7 @@ In the `nxt-lab` realm, create at least one user with a username, email, and pas
 
 Before wiring HAPI, confirm the realm is working by making a direct token request to Keycloak from your terminal using `curl`. You should be able to obtain an access token from the Client Credentials endpoint and decode the JWT payload manually. Verify the `iss`, `scope`, and `exp` claims look correct before involving HAPI.
 
-### Step 5.3 — Wire HAPI to Keycloak
+### Step 5.4 — Wire HAPI to Keycloak
 
 This step configures HAPI to validate tokens issued by Keycloak. HAPI's SMART-on-FHIR support is implemented via Spring Security's OAuth2 Resource Server. Configuration goes in the `hapi-fhir` service's environment variables in `docker-compose.yml` (or a mounted `application.yaml`).
 
@@ -1050,11 +1570,11 @@ After restarting the stack, an unauthenticated request to HAPI should now return
 
 > **The Docker networking issuer mismatch** is a real-world problem in miniature. In production, NXT's auth server has a single DNS name reachable from both internal services and external clients. In a local lab with Docker port mapping, the internal and external addresses differ. Knowing this problem exists — and knowing to look at the `iss` claim in the JWT and compare it to what the resource server is configured to expect — is exactly the diagnostic skill you'd apply when a customer reports "401 Unauthorized" on a freshly configured integration.
 
-### Step 5.4 — Client Credentials flow (Python, no browser)
+### Step 5.5 — Client Credentials flow (Python, no browser)
 
 Implement a `SmartFhirClient` class in `lib/smart_client.py`. This class is the Python embodiment of the Client Credentials flow. Design it so that:
 
-- It reads `KEYCLOAK_TOKEN_URL`, `CLIENT_ID`, `CLIENT_SECRET`, and `SCOPE` from the environment (add these to `.env`)
+- It reads `KEYCLOAK_TOKEN_URL`, `CLIENT_ID`, `CLIENT_SECRET`, and `SMART_SCOPE` from `lib.config.settings` (configured in `lib/config.py` and `.env` — see Step 5.1)
 - It holds the current access token and its expiry time as instance state
 - It exposes a method to get a valid token: if the cached token is still valid (with a small buffer, e.g., 30 seconds before expiry), return it; otherwise request a new one
 - It wraps `httpx.Client` so that all FHIR requests automatically include `Authorization: Bearer <token>`
@@ -1078,7 +1598,7 @@ After obtaining the access token, decode the payload without a library: split on
 
 Use `SmartFhirClient` to call `GET /fhir/Patient?_count=5`. This should succeed with the same result as before SMART was enabled — the only difference is the `Authorization` header. If it fails with 401, the token validation chain has a break — work through it step by step using the JWT claims you decoded.
 
-### Step 5.5 — Scope enforcement and deliberate failure exercises
+### Step 5.6 — Scope enforcement and deliberate failure exercises
 
 The most valuable learning in this phase comes from deliberately breaking things. Each failure teaches you exactly what HAPI checks and in what order. Work through each scenario, note the HTTP status code and response body, and document what broke.
 
@@ -1114,7 +1634,7 @@ Take a valid JWT, decode the payload, change the `scope` claim, re-encode (witho
 
 Document each result in a notebook cell. This exercise set is a complete diagnostic runbook for the most common SMART authentication failures.
 
-### Step 5.6 — Notebook: SMART client exercise (`05_smart_auth.ipynb`)
+### Step 5.7 — Notebook: SMART client exercise (`05_smart_auth.ipynb`)
 
 Create a notebook that tells the complete story of this phase as a narrative with live output:
 
@@ -1130,7 +1650,7 @@ Make three requests: unauthenticated (expect 401), with a valid token (expect 20
 **Section D — Token expiry and refresh simulation**
 Show the token lifecycle: request a token, display its `exp`, make a request, simulate expiry (by manipulating the cached `expires_at`), show the automatic re-request, make another FHIR call with the fresh token.
 
-> **Role relevance:** When a customer reports "my integration stopped working overnight," the most common causes are: token expiry with no refresh logic, JWKS key rotation (Keycloak rotates keys; old tokens signed with the previous key fail after rotation), or a scope that was revoked. The exercises in Step 5.5 and this notebook give you a complete diagnostic framework to work through any of those scenarios.
+> **Role relevance:** When a customer reports "my integration stopped working overnight," the most common causes are: token expiry with no refresh logic, JWKS key rotation (Keycloak rotates keys; old tokens signed with the previous key fail after rotation), or a scope that was revoked. The exercises in Step 5.6 and this notebook give you a complete diagnostic framework to work through any of those scenarios.
 
 ---
 
@@ -1240,9 +1760,10 @@ Validate the posted resources using `server_validate()`. Compare the OperationOu
 ### Keeping the `lib/fhir_client.py` clean
 
 As you add phases, resist the temptation to add one-off helpers to `fhir_client.py`. It should contain only:
-- Configuration (FHIR_BASE, HEADERS)
-- Generic FHIR patterns (pagination, $validate)
-- The SMART client (Phase 5)
+- Configuration constants (`FHIR_BASE`, `HEADERS`) — read from `lib/config.settings` after the Phase 5 migration to `pydantic-settings`; read from `os.environ` before that
+- Generic FHIR patterns (pagination, `$validate`)
+
+`lib/config.py` owns the configuration model (`Settings`). `lib/smart_client.py` owns the SMART token flow. Keep these three files focused on their single responsibility.
 
 Phase-specific logic (the gap checker, the census, the C-CDA mapper) belongs in the scripts, notebooks, or tests that use it.
 
