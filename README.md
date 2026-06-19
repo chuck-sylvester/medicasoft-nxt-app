@@ -90,7 +90,7 @@ Enabling US Core also makes Synthea emit resources you only get with the IG on �
 python scripts/load_synthea.py data/fhir
 ```
 
-`load_synthea.py` posts the infrastructure bundles first (`hospitalInformation*`, `practitionerInformation*`) before patient bundles — the dependency-ordering requirement. It prints the server's `OperationOutcome` on any failure, which is your first triage artifact. `FHIR_BASE` is read from `.env` (default: `http://localhost:8080/fhir`).
+`load_synthea.py` posts the infrastructure bundles first (`hospitalInformation*`, `practitionerInformation*`) before patient bundles — the dependency-ordering requirement. It prints the server's `OperationOutcome` on any failure, which is your first triage artifact. `FHIR_BASE_URL` is read from `.env` (default: `http://localhost:8080/fhir`).
 
 ## 4. Explore the REST API the way a customer does
 
@@ -111,7 +111,7 @@ Drill on search semantics: `_include` / `_revinclude`, chained params (`Observat
 python scripts/validate.py
 ```
 
-This reports US Core element/extension gaps on Patients, runs the server's `$validate` on a sample, and prints a CodeSystem census across Conditions and Observations (LOINC / SNOMED / RxNorm / ICD-10-CM / CVX). That census is the fast way to catch the classic HIE problem — a feed sending local codes where the consumer expects a standard system. `FHIR_BASE` is read from `.env`.
+This reports US Core element/extension gaps on Patients, runs the server's `$validate` on a sample, and prints a CodeSystem census across Conditions and Observations (LOINC / SNOMED / RxNorm / ICD-10-CM / CVX). That census is the fast way to catch the classic HIE problem — a feed sending local codes where the consumer expects a standard system. `FHIR_BASE_URL` is read from `.env`.
 
 **Profile validation server-side (optional):** base-spec `$validate` works out of the box; to validate against `us-core-patient` etc., load the IG by mounting an `application.yaml` overlay with:
 

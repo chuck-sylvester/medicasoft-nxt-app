@@ -373,7 +373,7 @@ Recommended final structure. You will build toward this across phases.
 
 ```
 medicasoft-nxt-app/
-├── .env                        # Runtime config — FHIR_BASE, etc. (gitignored)
+├── .env                        # Runtime config — FHIR_BASE_URL, etc. (gitignored)
 ├── .venv/                      # Python virtual environment (gitignored)
 ├── requirements.txt            # Runtime dependencies
 ├── requirements-dev.txt        # Dev/optional: duckdb, fhir.resources, pytest, jupyter
@@ -384,7 +384,7 @@ medicasoft-nxt-app/
 ├── lib/                        # Shared Python utilities
 │   ├── __init__.py
 │   ├── config.py               # Settings (pydantic-settings BaseSettings) — added in Phase 5
-│   ├── fhir_client.py          # FHIR_BASE, HEADERS, get_all(), server_validate()
+│   ├── fhir_client.py          # FHIR_BASE_URL, HEADERS, get_all(), server_validate()
 │   └── smart_client.py         # SmartFhirClient — token acquisition, caching, Bearer injection
 │
 ├── scripts/                    # Runnable investigation scripts
@@ -399,7 +399,7 @@ medicasoft-nxt-app/
 │   └── 05_smart_auth.ipynb     # OAuth2 / SMART token flow, JWT anatomy, scope enforcement
 │
 ├── tests/                      # pytest data-quality suite
-│   ├── conftest.py             # Shared fixtures (httpx client, FHIR_BASE)
+│   ├── conftest.py             # Shared fixtures (httpx client, FHIR_BASE_URL)
 │   ├── test_us_core.py         # US Core element/extension checks
 │   └── test_terminology.py     # CodeSystem census assertions
 │
@@ -413,7 +413,7 @@ medicasoft-nxt-app/
 
 **Why this structure?**
 
-- `lib/` prevents copy-pasting `get_all()` and `FHIR_BASE` into every script and notebook. All FHIR access goes through one place.
+- `lib/` prevents copy-pasting `get_all()` and `FHIR_BASE_URL` into every script and notebook. All FHIR access goes through one place.
 - `scripts/` vs `notebooks/` is a deliberate split: scripts are for repeatable, commandline-invocable operations; notebooks are for exploratory, interactive work that produces visual output and prose.
 - `tests/` is separate from `scripts/` because pytest has its own discovery conventions and the test suite has a different lifecycle (run on demand as a gate) from investigation scripts (run ad hoc).
 - `data/` is gitignored because Synthea output is large and reproducible from a seed.
@@ -434,7 +434,7 @@ The project uses pip (not uv) for package management. Before implementing any ph
 
 **What it does and why it exists**
 
-Rather than exporting `FHIR_BASE` as a shell variable before every script run, store configuration in a `.env` file at the repo root and load it at startup. `python-dotenv`'s `load_dotenv()` function reads the file and pushes each key-value pair into `os.environ` — after that, the rest of the code reads `os.environ.get("FHIR_BASE")` exactly as it would if you had set the variable in your shell.
+Rather than exporting `FHIR_BASE_URL` as a shell variable before every script run, store configuration in a `.env` file at the repo root and load it at startup. `python-dotenv`'s `load_dotenv()` function reads the file and pushes each key-value pair into `os.environ` — after that, the rest of the code reads `os.environ.get("FHIR_BASE_URL")` exactly as it would if you had set the variable in your shell.
 
 The `.env` file is gitignored. It also makes it trivial to switch between the local Docker stack and a remote staging endpoint without changing code — just update the file. This matches how you'd work against a customer's environment: the codebase is identical; only the configuration changes.
 
@@ -444,20 +444,27 @@ One `KEY=VALUE` pair per line. Comments start with `#`. No quotes are needed for
 
 ```
 # MedicaSoft NXT lab configuration
-FHIR_BASE=http://localhost:8080/fhir
+FHIR_BASE_URL=http://localhost:8080/fhir
 ```
 
 Conventions to know:
-- Keys are case-sensitive (`FHIR_BASE` ≠ `fhir_base`). By convention, environment variable names use `UPPER_SNAKE_CASE`.
-- `python-dotenv` will **not** override a variable that is already set in `os.environ` — the shell wins over the file. This is intentional: you can override a `.env` value for a single run by setting the variable inline (`FHIR_BASE=http://staging:8080/fhir python scripts/validate.py`) without editing the file.
+- Keys are case-sensitive (`FHIR_BASE_URL` ≠ `fhir_base_url`). By convention, environment variable names use `UPPER_SNAKE_CASE`.
+- `python-dotenv` will **not** override a variable that is already set in `os.environ` — the shell wins over the file. This is intentional: you can override a `.env` value for a single run by setting the variable inline (`FHIR_BASE_URL=http://staging:8080/fhir python scripts/validate.py`) without editing the file.
 - Values with spaces should be quoted: `SOME_VALUE="hello world"`
 - Empty values are valid: `OPTIONAL_VAR=`
+- **Variable interpolation** is supported: `${VAR}` expands to the value of another variable defined earlier in the same file. This enables a multi-server pattern — define named endpoint variables at the top, then a single active-server variable referencing one of them:
+  ```
+  FHIR_BASE_URL_LOCAL="http://localhost:8080/fhir"
+  FHIR_BASE_URL_EXTERNAL_1="https://hapi.fhir.org/baseR4"
+  FHIR_BASE_URL=${FHIR_BASE_URL_LOCAL}
+  ```
+  Switching targets requires editing only the last line. Order matters: the referenced variable must be defined above the line that uses it.
 
 **How `load_dotenv()` works**
 
 `load_dotenv()` opens `.env`, parses each non-comment non-blank line as `KEY=VALUE`, and calls `os.environ.setdefault(KEY, VALUE)` for each pair. `setdefault` only sets the variable if it is not already in `os.environ` — that is what gives the shell-wins behavior described above.
 
-Call `load_dotenv()` at the top of `lib/fhir_client.py`, before reading any environment variable. Because Python caches module imports, this happens exactly once per interpreter session. Any script or notebook that does `from lib.fhir_client import FHIR_BASE` gets the benefit automatically — you do not need to call `load_dotenv()` in every script.
+Call `load_dotenv()` at the top of `lib/fhir_client.py`, before reading any environment variable. Because Python caches module imports, this happens exactly once per interpreter session. Any script or notebook that does `from lib.fhir_client import FHIR_BASE_URL` gets the benefit automatically — you do not need to call `load_dotenv()` in every script.
 
 **Security notes**
 
@@ -515,11 +522,10 @@ Create `.venv` using Python 3.12 explicitly. Verify you have the right interpret
 
 ### Step 0.2 — `requirements.txt` and `requirements-dev.txt`
 
-Decide what belongs in each. Runtime (what scripts need to run): `httpx`, `python-dotenv`. Dev/optional (what you need to develop and explore): `pytest`, `jupyter`, `ipykernel`, `duckdb`, `fhir.resources==7.*`, `hl7apy` (for Phase 6), `lxml` (for Phase 6).
+Decide what belongs in each.  
 
-Think about: should a user who only wants to run `load_synthea.py` need to install duckdb? No. That's the split.
-
-`python-dotenv` belongs in `requirements.txt` (runtime), not `requirements-dev.txt`, because every script and notebook reads from `.env`. A user running only `load_synthea.py` still needs `.env` loaded — they should not need dev dependencies for that. When Phase 5 adds `pydantic` and `pydantic-settings`, those also go in `requirements.txt` for the same reason: they are part of the runtime configuration layer, not development tooling.
+**Runtime:** httpx, python-dotenv  
+**Dev/optional:** pytest, jupyter, ipykernel, duckdb, fhir.resources==7.*, hl7apy (Phase 6), lxml (Phase 6)  
 
 ### Step 0.3 — `.env` file
 
@@ -528,19 +534,19 @@ Think about: should a user who only wants to run `load_synthea.py` need to insta
 Create `.env` at the repo root. It is already in `.gitignore` — verify this before adding any secrets in Phase 5: `git check-ignore -v .env` should print the file path. For Phase 0, the file contains one variable:
 
 ```
-FHIR_BASE=http://localhost:8080/fhir
+FHIR_BASE_URL=http://localhost:8080/fhir
 ```
 
 This is the only variable you need for Phases 0–4. Phase 5 adds four Keycloak variables after the realm is configured; see Step 5.1.
 
 **How `python-dotenv` reads it**
 
-`load_dotenv()` reads each `KEY=VALUE` line and calls `os.environ.setdefault(KEY, VALUE)`. The `setdefault` call is the important detail: it only sets the variable if it is not already present in `os.environ`. This means the shell always wins over `.env`. If `FHIR_BASE` is already exported in your shell, `load_dotenv()` leaves it alone.
+`load_dotenv()` reads each `KEY=VALUE` line and calls `os.environ.setdefault(KEY, VALUE)`. The `setdefault` call is the important detail: it only sets the variable if it is not already present in `os.environ`. This means the shell always wins over `.env`. If `FHIR_BASE_URL` is already exported in your shell, `load_dotenv()` leaves it alone.
 
 The practical consequence: to point a single script run at a different FHIR server without editing `.env`, set the variable inline:
 
 ```bash
-FHIR_BASE=http://staging:8080/fhir python scripts/validate.py
+FHIR_BASE_URL=http://staging:8080/fhir python scripts/validate.py
 ```
 
 No file change, no code change. This is how you'd connect to a customer's environment during an investigation.
@@ -551,7 +557,13 @@ Commit a `.env.example` file (no real values) to document which variables are ex
 
 ```
 # Copy to .env and fill in values
-FHIR_BASE=http://localhost:8080/fhir
+
+# FHIR server endpoints — python-dotenv supports ${VAR} interpolation
+FHIR_BASE_URL_LOCAL="http://localhost:8080/fhir"
+# FHIR_BASE_URL_EXTERNAL_1="https://..."
+
+# Active server — change right-hand side to switch targets
+FHIR_BASE_URL=${FHIR_BASE_URL_LOCAL}
 
 # Phase 5 additions — fill in after Keycloak is configured (see Step 5.1):
 # KEYCLOAK_TOKEN_URL=
@@ -564,7 +576,11 @@ FHIR_BASE=http://localhost:8080/fhir
 
 ### Step 0.4 — Project folder structure
 
-Create the directories: `lib/`, `scripts/`, `notebooks/`, `tests/`, `data/fhir/`. Add `__init__.py` to `lib/`. Update `.gitignore` to exclude `data/` (Synthea output is large and reproducible).
+Create the directories: `lib/`, `scripts/`, `notebooks/`, `tests/`, `data/fhir/`.  
+
+Add `__init__.py` to `lib/`.  
+
+Update `.gitignore` to exclude `data/` (Synthea output is large and reproducible).  
 
 Move `load_synthea.py` and `validate.py` from the repo root into `scripts/`. This is a refactor — after moving, verify nothing references them at root.
 
@@ -572,28 +588,110 @@ Move `load_synthea.py` and `validate.py` from the repo root into `scripts/`. Thi
 
 This is the most important step in Phase 0. Design a shared module that:
 
-1. Calls `load_dotenv()` at import time so `FHIR_BASE` is always available from the environment.
-2. Defines `FHIR_BASE` and `HEADERS` as module-level constants (or a simple config object).
+1. Calls `load_dotenv()` at import time so `FHIR_BASE_URL` is always available from the environment.
+2. Defines `FHIR_BASE_URL` and `HEADERS` as module-level constants (or a simple config object).
 3. Implements `get_all(client, resource_type, **params) -> list[dict]` — the pagination helper from `validate.py`, now extracted so every script can import it. Key detail: the function must clear `params` after the first request, because HAPI encodes the full cursor into the `next` link URL — re-sending the original params on subsequent requests resets the cursor.
 4. Implements `server_validate(client, resource) -> dict` — posts to `/{resourceType}/$validate` and returns the OperationOutcome.
 
 **Why `load_dotenv()` at module level, not inside `main()`**
 
-Calling `load_dotenv()` at the top of `lib/fhir_client.py` — outside any function — means it runs the first time Python imports the module, and only then (Python caches module imports). Any script or notebook that does `from lib.fhir_client import FHIR_BASE` triggers the call automatically. You never need to call `load_dotenv()` in `load_synthea.py`, `validate.py`, or a notebook.
+Calling `load_dotenv()` at the top of `lib/fhir_client.py` — outside any function — means it runs the first time Python imports the module, and only then (Python caches module imports). Any script or notebook that does `from lib.fhir_client import FHIR_BASE_URL` triggers the call automatically. You never need to call `load_dotenv()` in `load_synthea.py`, `validate.py`, or a notebook.
 
 Compare this to placing `load_dotenv()` inside `main()`: it would only run when the script is executed directly (`python scripts/validate.py`), not when the module is imported by a test or notebook. Module-level placement is more reliable for a shared library.
 
-Note also that `os.environ.get("FHIR_BASE", "http://localhost:8080/fhir")` keeps a default value even though `load_dotenv()` is called first. The default is a safety net for environments where `.env` does not exist — such as CI pipelines that inject environment variables directly rather than via a file. It is not a fallback you expect to need in the local lab.
+Note also that `os.environ.get("FHIR_BASE_URL", "http://localhost:8080/fhir")` keeps a default value even though `load_dotenv()` is called first. The default is a safety net for environments where `.env` does not exist — such as CI pipelines that inject environment variables directly rather than via a file. It is not a fallback you expect to need in the local lab.
 
 After this step, `validate.py` should import from `lib.fhir_client` rather than defining these locally.
 
 ### Step 0.6 — Verify Docker Compose
+
+**How Docker and Docker Compose support this project**
+
+Docker runs each service as an isolated **container** — a lightweight process with its own filesystem, network stack, and bundled dependencies. You don't install Java, Postgres, or Keycloak locally; Docker pulls pre-built images and runs them. Each container is ephemeral by design: its internal filesystem resets when it is removed. Named volumes (`hapi_pgdata`, `keycloak_pgdata`) persist the database files outside the containers so that data survives restarts.
+
+`docker compose up -d` reads `docker-compose.yml`, starts all four services, and puts them in the background (`-d` = detached). Compose creates a private internal network and assigns each service a DNS name matching its service key. HAPI connects to Postgres at `hapi-db:5432` — `hapi-db` is the service name and resolves to that container's internal IP. From your host machine, services are reachable only through their published ports (`8080` for HAPI, `8180` for Keycloak).
+
+**Services in Phases 0–4**
+
+All four containers start, but only three are actively used before Phase 5:
+
+| Service | Role in Phases 0–4 |
+|---|---|
+| `hapi-db` | Postgres — backing store for all HAPI FHIR data |
+| `hapi-fhir` | HAPI FHIR R4 server — the REST API you load data into and query |
+| `keycloak-db` | Postgres — backing store for Keycloak realm configuration |
+| `keycloak` | Runs but HAPI does not enforce auth; Keycloak is idle until Phase 5 |
+
+**`restart:`**
+
+Controls what Docker does when a container exits unexpectedly:
+
+- `always` — restart regardless of exit code. Applied to `hapi-db` and `keycloak-db`: databases should always be running; any exit is unexpected and should be recovered automatically.
+- `on-failure` — restart only when the container exits with a non-zero (error) code. Applied to `hapi-fhir` and `keycloak`: application containers can exit cleanly (e.g., `docker compose stop`), so `always` would restart them unnecessarily after an intentional stop.
+
+**`depends_on:` with `condition: service_healthy`**
+
+`depends_on` declares the startup order Docker Compose must respect. The plain form (`depends_on: hapi-db`) only guarantees that `hapi-db` has *started* before `hapi-fhir` — not that Postgres is ready to accept connections. Databases take a few seconds to initialize after the container process starts, so plain ordering still produces race-condition failures.
+
+`condition: service_healthy` is stronger: Compose waits until the dependency's `healthcheck` reports success before starting the dependent service. For `hapi-fhir` the sequence is:
+
+1. `hapi-db` container starts
+2. Docker runs `pg_isready -U admin -d hapi` every 10 seconds (`interval`)
+3. A response within 5 seconds (`timeout`) counts as a pass
+4. After 5 consecutive passes (`retries`) the container is marked **healthy**
+5. Only then does Compose start `hapi-fhir`
+
+The `healthcheck` fields used in this project:
+
+| Field | Purpose |
+|---|---|
+| `test` | The command Docker runs to probe readiness |
+| `interval` | How often to run the probe |
+| `timeout` | How long the probe may run before being counted as failed |
+| `retries` | Consecutive failures required to mark the container unhealthy |
+| `start_period` | Grace period after container start during which failures don't count (used on Keycloak — its JVM takes 30–90 seconds to initialize) |
 
 Start the stack and confirm HAPI is healthy before moving on. The key checks:
 
 - `GET /fhir/metadata` returns 200 with a `CapabilityStatement` resource
 - `GET /fhir/Patient` returns 200 with an empty Bundle (no data yet — that's expected)
 - Postgres health check passes (visible in `docker compose ps`)
+
+**Expected `docker compose ps` output (Phases 0–4)**
+
+```
+NAME                  IMAGE                              SERVICE       STATUS
+nxt-lab-hapi          hapiproject/hapi:latest            hapi-fhir     Up
+nxt-lab-hapi-db       postgres:16-alpine                 hapi-db       Up (healthy)
+nxt-lab-keycloak      quay.io/keycloak/keycloak:latest   keycloak      Up (healthy)
+nxt-lab-keycloak-db   postgres:16-alpine                 keycloak-db   Up (healthy)
+```
+
+**Keycloak shows `(unhealthy)` — root cause and fix**
+
+If Keycloak appears as `(unhealthy)`, the cause is that the health check in `docker-compose.yml` originally used `curl`, which is not installed in the Keycloak container image. Keycloak 22+ is built on Red Hat UBI minimal — a stripped-down base image that omits `curl` and `wget`.
+
+Verify with:
+```bash
+docker exec nxt-lab-keycloak which curl   # returns nothing if curl is absent
+```
+
+The `docker-compose.yml` health check has been updated to use bash's built-in `/dev/tcp` facility instead, which makes a raw TCP connection to Keycloak's management port (9000) without any external tools:
+
+```
+exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready ...' >&3 && timeout 5 cat <&3 | grep -q UP
+```
+
+If you encounter this on a fresh clone or after a pull, verify that `docker-compose.yml` contains the `/dev/tcp` form (not the `curl` form) and then recreate the stack:
+
+```bash
+docker compose down -v   # safe if no data has been loaded yet
+docker compose up -d
+```
+
+**Impact in Phases 0–4:** The `(unhealthy)` status is cosmetic — HAPI has no `depends_on` relationship with Keycloak during these phases, so the stack functions correctly regardless. The two GET checks above are the real confirmation that HAPI is working.
+
+**Impact in Phase 5:** The health check must pass before enabling auth. When you uncomment `depends_on: keycloak: condition: service_healthy` in Step 5.2, HAPI will wait indefinitely if the health check is still failing. Confirm Keycloak shows `(healthy)` before proceeding to that step.
 
 **Read the CapabilityStatement fully at this point.** Before loading data, understand what HAPI supports. Note which search parameters exist on `Patient`, `Condition`, and `Observation`. This sets up your expectations for Phase 2.
 
@@ -739,10 +837,6 @@ Produce a combined table: resource type → system → count. This is the artifa
 
 ---
 
-<br><br><br><br><br><br>
-<br><br><br><br><br><br>
-<br>
-
 ## Phase 3 — pytest Data-Quality Suite
 
 *Goal: convert the validate.py checks and notebook analyses into a repeatable, maintainable test suite.*
@@ -759,7 +853,7 @@ This is not a unit test suite — there's no mocking. It's an integration test s
 
 This file contains shared pytest fixtures. The most important fixture: an `httpx.Client` scoped to the test session (one client for all tests, not one per test). This requires understanding pytest's fixture scoping (`scope="session"`).
 
-The client should read `FHIR_BASE` from the environment (via `python-dotenv`), and the fixture should fail fast with a clear error if HAPI isn't reachable, rather than failing obscurely in every test.
+The client should read `FHIR_BASE_URL` from the environment (via `python-dotenv`), and the fixture should fail fast with a clear error if HAPI isn't reachable, rather than failing obscurely in every test.
 
 A second fixture: `all_patients` — fetches all patients once at session scope using `get_all()`. Many tests need the full patient list; fetching it once avoids N network round-trips.
 
@@ -1356,7 +1450,7 @@ Keycloak is an open-source Identity and Access Management (IAM) platform. For th
 
 **Why this step exists here**
 
-For Phases 0–4, a single environment variable (`FHIR_BASE`) plus `load_dotenv()` is sufficient. At Phase 5, four new variables appear — `KEYCLOAK_TOKEN_URL`, `CLIENT_ID`, `CLIENT_SECRET`, and `SMART_SCOPE` — and they are all required for the Client Credentials flow to work. With the `python-dotenv` approach, a missing `CLIENT_SECRET` doesn't surface until `SmartFhirClient` attempts a token request deep in execution, producing a confusing HTTP 401 rather than a clear configuration error. This is the natural inflection point to upgrade from scattered `os.environ.get()` calls to a typed configuration class that validates all required values at startup.
+For Phases 0–4, a single environment variable (`FHIR_BASE_URL`) plus `load_dotenv()` is sufficient. At Phase 5, four new variables appear — `KEYCLOAK_TOKEN_URL`, `CLIENT_ID`, `CLIENT_SECRET`, and `SMART_SCOPE` — and they are all required for the Client Credentials flow to work. With the `python-dotenv` approach, a missing `CLIENT_SECRET` doesn't surface until `SmartFhirClient` attempts a token request deep in execution, producing a confusing HTTP 401 rather than a clear configuration error. This is the natural inflection point to upgrade from scattered `os.environ.get()` calls to a typed configuration class that validates all required values at startup.
 
 **What `pydantic-settings` is**
 
@@ -1387,7 +1481,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     # Phase 0 — always required
-    fhir_base: AnyHttpUrl = "http://localhost:8080/fhir"
+    fhir_base_url: AnyHttpUrl = "http://localhost:8080/fhir"
 
     # Phase 5 — required for SMART / Client Credentials; optional until Keycloak is configured
     keycloak_token_url: Optional[AnyHttpUrl] = None
@@ -1401,7 +1495,7 @@ settings = Settings()
 
 Two design decisions worth understanding:
 
-*Env var name mapping is automatic.* Pydantic Settings maps the lowercase field name `fhir_base` to the environment variable `FHIR_BASE`. You write lowercase Python attribute names; the `.env` file uses uppercase `KEY=VALUE`; the mapping is automatic and case-insensitive.
+*Env var name mapping is automatic.* Pydantic Settings maps the lowercase field name `fhir_base_url` to the environment variable `FHIR_BASE_URL`. You write lowercase Python attribute names; the `.env` file uses uppercase `KEY=VALUE`; the mapping is automatic and case-insensitive.
 
 *Optional fields for Phase 5 variables.* The Keycloak variables are declared `Optional[...] = None` rather than required (no default → required in Pydantic). This lets the `Settings` class be imported by `lib/fhir_client.py` from Phase 0 onward without raising a `ValidationError` when those variables are absent from `.env`. When `SmartFhirClient` actually needs them, it should assert they are not `None` with a clear error:
 
@@ -1414,15 +1508,15 @@ This produces an actionable message rather than a `TypeError: argument of type '
 
 **Migrate `lib/fhir_client.py`**
 
-Replace the `load_dotenv()` call and `os.environ.get("FHIR_BASE", ...)` with an import from `lib.config`:
+Replace the `load_dotenv()` call and `os.environ.get("FHIR_BASE_URL", ...)` with an import from `lib.config`:
 
 ```python
 from lib.config import settings
 
-FHIR_BASE = str(settings.fhir_base)
+FHIR_BASE_URL = str(settings.fhir_base_url)
 ```
 
-Note the `str()` call: `settings.fhir_base` is a Pydantic `AnyHttpUrl` object, not a plain string. `httpx` accepts either, but string concatenation and f-strings require an explicit conversion.
+Note the `str()` call: `settings.fhir_base_url` is a Pydantic `AnyHttpUrl` object, not a plain string. `httpx` accepts either, but string concatenation and f-strings require an explicit conversion.
 
 **Migrate `lib/smart_client.py`**
 
@@ -1440,15 +1534,15 @@ scope       = settings.smart_scope
 
 **Migrate `tests/conftest.py`**
 
-Replace the `os.environ.get("FHIR_BASE")` call in the shared fixture with `str(settings.fhir_base)`.
+Replace the `os.environ.get("FHIR_BASE_URL")` call in the shared fixture with `str(settings.fhir_base_url)`.
 
 **What `AnyHttpUrl` validation gives you**
 
-With `os.environ.get("FHIR_BASE", "http://localhost:8080/fhir")`, any string is accepted silently. With `fhir_base: AnyHttpUrl`, Pydantic validates that the value is a well-formed HTTP or HTTPS URL at construction time. A typo like `htp://localhost:8080/fhir` raises immediately:
+With `os.environ.get("FHIR_BASE_URL", "http://localhost:8080/fhir")`, any string is accepted silently. With `fhir_base_url: AnyHttpUrl`, Pydantic validates that the value is a well-formed HTTP or HTTPS URL at construction time. A typo like `htp://localhost:8080/fhir` raises immediately:
 
 ```
 pydantic_core._pydantic_core.ValidationError: 1 validation error for Settings
-fhir_base
+fhir_base_url
   URL scheme should be 'http' or 'https' [type=url_scheme, ...]
 ```
 
@@ -1462,7 +1556,7 @@ The error appears when the process starts — not when the first network call fa
 | Type coercion | All values are strings | Automatic: `int`, `bool`, `AnyHttpUrl`, etc. |
 | Required field enforcement | Silent `None`, runtime crash | `ValidationError` at import time |
 | Optional Phase 5 variables | `os.environ.get()` returns `None` silently | Declared `Optional[...] = None`, asserted where used |
-| IDE autocomplete | None — string key lookup | Full — `settings.fhir_base` is a typed attribute |
+| IDE autocomplete | None — string key lookup | Full — `settings.fhir_base_url` is a typed attribute |
 | Single source of truth | Scattered `os.environ.get()` calls | One `settings` object imported everywhere |
 | Readable config schema | Check each call site | One `class Settings` shows all variables |
 
@@ -1760,7 +1854,7 @@ Validate the posted resources using `server_validate()`. Compare the OperationOu
 ### Keeping the `lib/fhir_client.py` clean
 
 As you add phases, resist the temptation to add one-off helpers to `fhir_client.py`. It should contain only:
-- Configuration constants (`FHIR_BASE`, `HEADERS`) — read from `lib/config.settings` after the Phase 5 migration to `pydantic-settings`; read from `os.environ` before that
+- Configuration constants (`FHIR_BASE_URL`, `HEADERS`) — read from `lib/config.settings` after the Phase 5 migration to `pydantic-settings`; read from `os.environ` before that
 - Generic FHIR patterns (pagination, `$validate`)
 
 `lib/config.py` owns the configuration model (`Settings`). `lib/smart_client.py` owns the SMART token flow. Keep these three files focused on their single responsibility.
@@ -1810,10 +1904,16 @@ docker compose up -d
 # Check stack health (all services should show "healthy" or "running")
 docker compose ps
 
-# Stop stack (keeps data volumes)
+# Stop containers — keeps containers and volumes intact (fastest way to pause and resume)
 docker compose stop
 
-# Stop and wipe all data volumes
+# Remove containers and network — volumes (HAPI data, Keycloak config) are preserved
+# Use when changing docker-compose.yml settings that require container recreation
+docker compose down
+
+# Remove containers, network, AND volumes — complete wipe, fully fresh start
+# Use when there is no data worth keeping (e.g., before first real data load,
+# or when recovering from a corrupt state)
 docker compose down -v
 
 # View HAPI logs
@@ -1872,8 +1972,13 @@ GET  /fhir/$export                           Bulk export (async)
 ### `.env` variables (full set across all phases)
 
 ```
-# Phase 0 — FHIR server
-FHIR_BASE=http://localhost:8080/fhir
+# Phase 0 — FHIR server endpoints (python-dotenv supports ${VAR} interpolation)
+FHIR_BASE_URL_LOCAL="http://localhost:8080/fhir"
+# FHIR_BASE_URL_EXTERNAL_1="https://fhir-bootcamp.medblocks.com/fhir"
+# FHIR_BASE_URL_EXTERNAL_2="https://hapi.fhir.org/baseR4"
+
+# Active server — change right-hand side to switch targets
+FHIR_BASE_URL=${FHIR_BASE_URL_LOCAL}
 
 # Phase 5 — Keycloak / SMART
 KEYCLOAK_TOKEN_URL=http://localhost:8180/realms/nxt-lab/protocol/openid-connect/token

@@ -3,7 +3,7 @@
 
 Usage:
     python load_synthea.py ./synthea/output/fhir
-    FHIR_BASE=http://localhost:8080/fhir python load_synthea.py <dir>
+    FHIR_BASE_URL=http://localhost:8080/fhir python load_synthea.py <dir>
 
 Why the ordering matters: Synthea writes two infrastructure bundles
 (hospitalInformation*.json, practitionerInformation*.json) that the patient
@@ -18,8 +18,7 @@ import sys
 
 import httpx
 
-FHIR_BASE = os.environ.get("FHIR_BASE", "http://localhost:8080/fhir")
-HEADERS = {"Content-Type": "application/fhir+json", "Accept": "application/fhir+json"}
+from lib.fhir_client import FHIR_BASE_URL, HEADERS
 
 
 def ordered_files(d: str) -> list[str]:
@@ -43,7 +42,7 @@ def post_bundle(client: httpx.Client, path: str) -> httpx.Response:
             f"{os.path.basename(path)} is a '{bundle.get('type')}' bundle; "
             "re-run Synthea with --exporter.fhir.transaction_bundle true"
         )
-    resp = client.post(FHIR_BASE, json=bundle, headers=HEADERS)
+    resp = client.post(FHIR_BASE_URL, json=bundle, headers=HEADERS)
     resp.raise_for_status()
     return resp
 
@@ -54,7 +53,7 @@ def main() -> None:
     if not files:
         sys.exit(f"No bundles found in {out_dir}")
 
-    print(f"Loading {len(files)} bundles into {FHIR_BASE}")
+    print(f"Loading {len(files)} bundles into {FHIR_BASE_URL}")
     with httpx.Client(timeout=180) as client:
         for i, path in enumerate(files, 1):
             name = os.path.basename(path)

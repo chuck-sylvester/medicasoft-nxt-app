@@ -22,6 +22,9 @@ venv/
 .venv/
 venv.bak/
 
+# Large Datasets
+data/
+
 # Files created on OCI
 nohup.out
 uvicorn.log

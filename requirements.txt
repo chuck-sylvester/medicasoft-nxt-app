@@ -1,0 +1,16 @@
+# -----------------------------------------------------------
+# Runtime Dependencies
+# -----------------------------------------------------------
+# pip install -r requirements.txt
+# -----------------------------------------------------------
+
+# HTTP client
+httpx
+
+# Note: pydantic-settings (Phase 5, Step 5.1) uses python-dotenv internally;
+# this direct dependency can be removed once that migration is complete
+python-dotenv
+
+# Phase 5 additions — uncomment after completing Step 5.1 (pydantic-settings migration)
+# pydantic>=2.0
+# pydantic-settings>=2.0

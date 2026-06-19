@@ -13,9 +13,14 @@
 # Phase 0–4: HAPI runs with auth disabled (Spring Security env vars commented out).
 # Phase 5:   Uncomment the SMART / Spring Security block in hapi-fhir and restart.
 #
-#   docker compose up -d
-#   docker compose ps          # all four services should reach healthy/running
-#   docker compose logs -f     # stream all logs
+#   docker compose up -d               # start all services in the background
+#   docker compose ps                  # all four services should reach healthy/running
+#   docker compose logs -f             # stream all logs
+#
+# Stopping and teardown:
+#   docker compose stop                # stop containers, keep containers + volumes (fastest restart)
+#   docker compose down                # remove containers + network, keep volumes (data preserved)
+#   docker compose down -v             # remove containers + network + volumes (complete wipe, fresh start)
 
 services:
 
@@ -61,7 +66,7 @@ services:
   # ---------------------------------------------------------------------------
   hapi-db:
     image: postgres:16-alpine
-    container_name: nxt-lab-db
+    container_name: nxt-lab-hapi-db
     restart: always
     environment:
       POSTGRES_USER: admin
@@ -116,7 +121,10 @@ services:
     healthcheck:
       # Keycloak 22+ exposes /health/ready on management port 9000.
       # Allow a long start_period — Keycloak JVM startup takes 30–90 seconds.
-      test: ["CMD-SHELL", "curl -sf http://localhost:9000/health/ready || exit 1"]
+      #
+      # Note: the Keycloak image (UBI minimal base) does not include curl or wget.
+      # Uses bash's built-in /dev/tcp facility to make a raw HTTP request instead.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && timeout 5 cat <&3 | grep -q UP"]
       interval: 15s
       timeout: 10s
       retries: 10

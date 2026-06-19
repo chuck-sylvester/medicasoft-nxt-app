@@ -21,12 +21,12 @@ The full implementation plan is in `docs/developer-guide.md`. That document is t
 
 ```
 medicasoft-nxt-app/
-├── .env                    # FHIR_BASE, Keycloak client vars (gitignored)
+├── .env                    # FHIR_BASE_URL, Keycloak client vars (gitignored)
 ├── requirements.txt        # Runtime dependencies
 ├── requirements-dev.txt    # Dev/optional dependencies
 ├── docker-compose.yml      # 4-service stack: HAPI + hapi-db + Keycloak + keycloak-db
 ├── lib/                    # Shared Python utilities
-│   ├── fhir_client.py      # FHIR_BASE, HEADERS, get_all(), server_validate()
+│   ├── fhir_client.py      # FHIR_BASE_URL, HEADERS, get_all(), server_validate()
 │   └── smart_client.py     # SmartFhirClient — token acquisition, Bearer injection
 ├── scripts/                # Runnable investigation scripts
 │   ├── load_synthea.py     # Posts Synthea bundles to HAPI (infra-first ordering)
@@ -40,7 +40,13 @@ medicasoft-nxt-app/
 
 **Environment config** — create `.env` at repo root before running scripts:
 ```
-FHIR_BASE=http://localhost:8080/fhir
+# FHIR server endpoints — python-dotenv supports ${VAR} interpolation within the file
+FHIR_BASE_URL_LOCAL="http://localhost:8080/fhir"
+# FHIR_BASE_URL_EXTERNAL_1="https://..."
+
+# Active server — change the right-hand side to switch targets
+FHIR_BASE_URL=${FHIR_BASE_URL_LOCAL}
+
 # Phase 5 additions (after Keycloak realm is configured):
 # KEYCLOAK_TOKEN_URL=http://localhost:8180/realms/nxt-lab/protocol/openid-connect/token
 # CLIENT_ID=nxt-backend
@@ -110,7 +116,7 @@ jupyter notebook notebooks/
 ## Key files
 
 - **`docker-compose.yml`** — 4-service stack. Phase 5 HAPI env vars are commented out; see inline comments before editing.
-- **`lib/fhir_client.py`** — shared FHIR utilities: `FHIR_BASE`, `HEADERS`, `get_all()` (pagination), `server_validate()`.
+- **`lib/fhir_client.py`** — shared FHIR utilities: `FHIR_BASE_URL`, `HEADERS`, `get_all()` (pagination), `server_validate()`.
 - **`lib/smart_client.py`** — `SmartFhirClient`: Client Credentials token request, expiry caching, Bearer header injection.
 - **`scripts/load_synthea.py`** — posts transaction bundles; infrastructure bundles load first; prints `OperationOutcome` on failure.
 - **`scripts/validate.py`** — US Core Patient gap checks, server-side `$validate`, CodeSystem census (LOINC / SNOMED / RxNorm / ICD-10-CM / CVX / CPT).

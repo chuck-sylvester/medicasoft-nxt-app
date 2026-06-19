@@ -9,41 +9,16 @@ Covers three PD responsibilities directly:
 Runnable with only httpx. The optional fhir.resources block shows local model
 validation; pin the package to a FHIR-R4 build to avoid R4-vs-R4B drift.
 
-    FHIR_BASE=http://localhost:8080/fhir python validate.py
+    FHIR_BASE_URL=http://localhost:8080/fhir python validate.py
 """
 import collections
-import os
 
 import httpx
 
-FHIR_BASE = os.environ.get("FHIR_BASE", "http://localhost:8080/fhir")
+from lib.fhir_client import get_all, server_validate
+
 RACE_EXT = "http://hl7.org/fhir/us/core/StructureDefinition/us-core-race"
 ETHNICITY_EXT = "http://hl7.org/fhir/us/core/StructureDefinition/us-core-ethnicity"
-HEADERS = {"Accept": "application/fhir+json"}
-
-
-def get_all(client: httpx.Client, resource_type: str, **params) -> list[dict]:
-    """Page through a search result set, following Bundle 'next' links."""
-    params.setdefault("_count", 200)
-    url, out = f"{FHIR_BASE}/{resource_type}", []
-    while url:
-        bundle = client.get(url, params=params, headers=HEADERS).raise_for_status().json()
-        out += [e["resource"] for e in bundle.get("entry", [])]
-        params = {}  # 'next' link already carries the cursor
-        url = next((l["url"] for l in bundle.get("link", []) if l["relation"] == "next"), None)
-    return out
-
-
-def server_validate(client: httpx.Client, resource: dict) -> dict:
-    """Authoritative, version-correct validation via the server's $validate.
-    Base-spec validation works out of the box; profile validation needs the
-    US Core IG package loaded into HAPI (see README)."""
-    rt = resource["resourceType"]
-    return client.post(
-        f"{FHIR_BASE}/{rt}/$validate",
-        json=resource,
-        headers={"Content-Type": "application/fhir+json", **HEADERS},
-    ).json()
 
 
 def us_core_patient_gaps(patient: dict) -> list[str]:

@@ -1,0 +1,28 @@
+# -----------------------------------------------------------
+# Development and Optional Dependencies
+# -----------------------------------------------------------
+# pip install -r requirements-dev.txt
+# -----------------------------------------------------------
+
+# Test runner
+pytest
+
+# Notebook server
+jupyter
+
+# Jupyter kernel registration — registers .venv as the notebook kernel
+# After install, run: python -m ipykernel install --user --name=nxt-lab
+ipykernel
+
+# In-process analytical SQL engine
+duckdb
+
+# FHIR R4 Python models
+# Pinned to 7.* (R4 build); always import from fhir.resources.R4, not fhir.resources.R4B
+fhir.resources==7.*
+
+# C-CDA XML parsing
+lxml
+
+# HL7 v2 / CDA message parsing — Phase 6 (extend for HL7 v2 feed work)
+hl7apy
