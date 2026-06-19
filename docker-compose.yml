@@ -1,14 +1,27 @@
-# NXT-approximation lab: HAPI FHIR R4 server backed by Postgres.
-# HAPI's REST surface mirrors MedicaSoft NXT's "FHIR repository + FHIR APIs".
-# The Postgres backend lets you also peek at how a JPA FHIR server persists
-# resources relationally (NXT uses Couchbase, but the relational view is
-# instructive for the analytics/consistency side of the job).
+# NXT-approximation lab: HAPI FHIR R4 + Keycloak (OAuth2 / OIDC / SMART-on-FHIR)
+#
+# HAPI mirrors MedicaSoft NXT's "FHIR repository + FHIR APIs".
+# Keycloak mirrors NXT's auth layer: OAuth2 Authorization Server +
+# OpenID Connect Provider + SMART-on-FHIR discovery.
+#
+# Port assignments (host):
+#   8080  HAPI FHIR REST + UI      http://localhost:8080/fhir
+#   8180  Keycloak Admin + OIDC    http://localhost:8180/
+#
+# Keycloak internal network address (used by HAPI for JWKS): keycloak:8080
+#
+# Phase 0–4: HAPI runs with auth disabled (Spring Security env vars commented out).
+# Phase 5:   Uncomment the SMART / Spring Security block in hapi-fhir and restart.
 #
 #   docker compose up -d
-#   open http://localhost:8080/         (HAPI tester UI)
-#   base URL for REST calls: http://localhost:8080/fhir
+#   docker compose ps          # all four services should reach healthy/running
+#   docker compose logs -f     # stream all logs
 
 services:
+
+  # ---------------------------------------------------------------------------
+  # HAPI FHIR — R4 resource server
+  # ---------------------------------------------------------------------------
   hapi-fhir:
     image: hapiproject/hapi:latest
     container_name: nxt-lab-hapi
@@ -21,13 +34,31 @@ services:
       SPRING_DATASOURCE_PASSWORD: "admin"
       SPRING_DATASOURCE_DRIVER_CLASS_NAME: "org.postgresql.Driver"
       HIBERNATE_DIALECT: "ca.uhn.fhir.jpa.model.dialect.HapiFhirPostgresDialect"
-      # Default FHIR version for this image is already R4.
-      # To validate against US Core profiles server-side, mount an
-      # application.yaml that loads the US Core IG package (see README).
+
+      # ------------------------------------------------------------------
+      # Phase 5: SMART-on-FHIR + Keycloak token validation.
+      # Uncomment this block after the nxt-lab realm is configured in
+      # Keycloak and all four containers are healthy.
+      #
+      # HAPI_FHIR_SMART_ENABLED: "true"
+      # HAPI_FHIR_SERVER_ADDRESS: "http://localhost:8080/fhir"
+      #
+      # Use jwk-set-uri (internal Docker address) rather than issuer-uri
+      # to avoid the localhost vs. container-name resolution mismatch.
+      # See developer-guide.md §5.3 for the full explanation.
+      #
+      # SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI: "http://keycloak:8080/realms/nxt-lab/protocol/openid-connect/certs"
+      # ------------------------------------------------------------------
     depends_on:
       hapi-db:
         condition: service_healthy
+      # Phase 5: uncomment to make HAPI wait for Keycloak before starting.
+      # keycloak:
+      #   condition: service_healthy
 
+  # ---------------------------------------------------------------------------
+  # HAPI backing database
+  # ---------------------------------------------------------------------------
   hapi-db:
     image: postgres:16-alpine
     container_name: nxt-lab-db
@@ -44,5 +75,72 @@ services:
       timeout: 5s
       retries: 5
 
+  # ---------------------------------------------------------------------------
+  # Keycloak — OAuth2 Authorization Server + OpenID Connect Provider
+  #
+  # Runs in start-dev mode (no TLS required; admin console at root).
+  # KC_HOSTNAME_URL sets the external base URL so the `iss` claim in JWTs
+  # reflects the address reachable by Python clients and browsers (port 8180),
+  # not Keycloak's internal container port (8080).
+  #
+  # First-time setup (Phase 5):
+  #   1. Open http://localhost:8180 and log in with admin / admin
+  #   2. Create realm: nxt-lab
+  #   3. Create client: nxt-backend (confidential, service accounts enabled)
+  #   4. Create client: nxt-webapp (public, standard flow, redirect to :8000/callback)
+  #   5. Create a test user for Authorization Code flow
+  #   See developer-guide.md §Step 5.2 for full configuration details.
+  # ---------------------------------------------------------------------------
+  keycloak:
+    image: quay.io/keycloak/keycloak:latest
+    container_name: nxt-lab-keycloak
+    command: start-dev
+    restart: on-failure
+    ports:
+      - "8180:8080"
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_DB: postgres
+      KC_DB_URL: "jdbc:postgresql://keycloak-db:5432/keycloak"
+      KC_DB_USERNAME: admin
+      KC_DB_PASSWORD: admin
+      # External URL — sets the `iss` claim in all JWTs to http://localhost:8180/realms/<realm>
+      KC_HOSTNAME_URL: "http://localhost:8180"
+      KC_HOSTNAME_ADMIN_URL: "http://localhost:8180"
+      # Expose /health/ready on the management port (9000) for the health check below
+      KC_HEALTH_ENABLED: "true"
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+    healthcheck:
+      # Keycloak 22+ exposes /health/ready on management port 9000.
+      # Allow a long start_period — Keycloak JVM startup takes 30–90 seconds.
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/health/ready || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+
+  # ---------------------------------------------------------------------------
+  # Keycloak backing database (separate from hapi-db to avoid schema collisions)
+  # ---------------------------------------------------------------------------
+  keycloak-db:
+    image: postgres:16-alpine
+    container_name: nxt-lab-keycloak-db
+    restart: always
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: keycloak
+    volumes:
+      - keycloak_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d keycloak"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   hapi_pgdata:
+  keycloak_pgdata:
