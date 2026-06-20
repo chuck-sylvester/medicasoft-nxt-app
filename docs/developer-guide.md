@@ -505,9 +505,19 @@ DuckDB is an in-process analytical SQL engine. No server, no setup — just `imp
 
 ### Jupyter Notebooks
 
-Notebooks run in the `.venv` kernel. Install `jupyter` in `requirements-dev.txt`, then register the kernel: `python -m ipykernel install --user --name=nxt-lab`. This ensures notebooks use the project's venv. Notebooks import from `lib/` the same way scripts do — the project root needs to be on the Python path, which you can do with a `.pth` file or a one-line `sys.path.insert` in the notebook.
+Notebooks run in the `.venv` kernel.  
 
-<br><br><br><br><br>
+Install `jupyter` in `requirements-dev.txt`, then register the kernel:
+```bash
+python -m ipykernel install --user --name=nxt-lab
+```
+
+This ensures notebooks use the project's venv. Notebooks import from `lib/` the same way scripts do. The `.pth` file created in Step 0.1 adds the project root to `sys.path` automatically, so no additional path configuration is needed in notebooks.
+
+<br><br><br><br><br><br><br><br><br><br>
+<br><br><br><br><br><br><br><br><br><br>
+<br><br><br><br><br><br><br><br><br><br>
+<br><br><br><br><br><br><br><br>
 
 # MedicaSoft NXT Lab
 Implementation
@@ -519,6 +529,41 @@ Implementation
 ### Step 0.1 — Python virtual environment
 
 Create `.venv` using Python 3.12 explicitly. Verify you have the right interpreter before creating it (`python3.12 --version`). Activate and confirm you're using the venv Python.
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python --version   # must show 3.12.x
+```
+
+**Add the project root to `sys.path` (required for `lib/` imports)**
+
+Scripts in `scripts/` import from `lib/` using `from lib.fhir_client import ...`. When Python runs a script, it adds the script's own directory (`scripts/`) to `sys.path` — not the project root — so `lib/` cannot be found unless the project root is explicitly on the path.
+
+There are several ways to address this. The table below summarizes the options and the rationale for the approach taken here:
+
+| Approach | How it works | Verdict |
+|---|---|---|
+| **`.pth` file in site-packages** | Python reads every `.pth` file at venv startup and adds each line to `sys.path`. One command, automatic thereafter. | **Used here** |
+| `pip install -e .` | Installs the project as an editable package; creates the same `.pth` file under the hood. Requires a `pyproject.toml`. | Correct for a real package; overkill for a learning lab |
+| `export PYTHONPATH=.` | Sets the path for the shell session or permanently via `.zshrc`. Well-known, explicit. | Valid — but requires remembering to set it in every new session unless added to the activate script |
+| `sys.path.insert()` in each script | Adds the path at the top of every script file. | Avoid — must be duplicated in every file, mixes path manipulation with application logic, considered a code smell |
+
+The `.pth` file approach is the right choice here: it is the same mechanism `pip install -e .` uses internally, it requires no changes to any source file, and it applies automatically to every script, notebook, and pytest run inside the venv.
+
+Run this once from the project root immediately after creating the venv:
+
+```bash
+echo "$(pwd)" > .venv/lib/python3.12/site-packages/nxt-lab.pth
+```
+
+Verify it is in effect:
+
+```bash
+python -c "import sys; print([p for p in sys.path if 'medicasoft' in p])"
+```
+
+The project root path should appear in the output. If you ever recreate the venv, re-run the `echo` command — the `.pth` file lives inside the venv and does not survive `rm -rf .venv`.
 
 ### Step 0.2 — `requirements.txt` and `requirements-dev.txt`
 
@@ -703,7 +748,14 @@ docker compose up -d
 
 ### Step 1.1 — Download Synthea
 
-Download the `synthea-with-dependencies.jar` from GitHub. Verify it runs: `java -jar synthea-with-dependencies.jar --help`. Note the Java version requirement (17+).
+Download the `synthea-with-dependencies.jar` from GitHub.  
+
+Verify it runs:
+```zsh
+java -jar synthea-with-dependencies.jar --help
+```
+
+Note the Java version requirement (17+).
 
 ### Step 1.2 — Understand the Synthea flags
 
@@ -715,20 +767,49 @@ Before running, understand what each flag does:
 - `--exporter.fhir.us_core_version 6.1.0` — pins the US Core version. 6.1.0 is the current version; earlier versions have different Must Support sets.
 - `--exporter.fhir.transaction_bundle true` — wraps output in `transaction` Bundles (required for `POST /fhir` ingestion). Without this flag, Synthea produces `collection` Bundles, which HAPI won't process as a transaction.
 
-Output lands in `./output/fhir/` by default. Move or copy it to `data/fhir/`.
+Output lands in `./output/fhir/` **relative to the directory you run the jar from**. Synthea does not need to be run from inside the project — the jar can live anywhere on the machine.
 
-### Step 1.3 — Understand `load_synthea.py` before touching it
+### Step 1.3 — Run Synthea and move the output into the project
 
-Read the script fully. Answer these questions for yourself before changing anything:
+Run the full command from wherever the jar is located. The flags from Step 1.2 are all required for US Core–profiled transaction bundles:
+
+```bash
+java -jar synthea-with-dependencies.jar \
+  -p 25 -s 1234 \
+  --exporter.fhir.use_us_core_ig true \
+  --exporter.fhir.us_core_version 6.1.0 \
+  --exporter.fhir.transaction_bundle true \
+  Virginia "Fairfax"
+```
+
+Start with `-p 5` on the first run to confirm the flags work before generating the full 25-patient dataset. The `-s 1234` seed guarantees identical output on every run with the same flags — useful for resetting HAPI to a known state.
+
+Confirm the output landed where expected:
+
+```bash
+ls output/fhir/
+```
+
+You should see at least one `hospitalInformation*.json`, one `practitionerInformation*.json`, and one or more patient bundles.
+
+Move the bundles into the project:
+
+```bash
+mv output/fhir/* /path/to/medicasoft-nxt-app/data/fhir/
+```
+
+The `data/fhir/` directory was created in Phase 0 Step 0.4 and is gitignored — Synthea output is large and fully reproducible from the seed, so it is never committed.
+
+### Step 1.4 — Understand `load_synthea.py` before running it
+
+Read the script fully. Answer these questions for yourself before running it:
 
 - Why are `hospitalInformation*` and `practitionerInformation*` loaded first? (Reference resolution: patient bundles contain references like `Organization/abc123`; if that Organization doesn't exist yet, the transaction fails.)
 - What does `raise_for_status()` do, and when does the `HTTPStatusError` handler trigger?
 - Why does the script validate that each bundle has `"type": "transaction"`?
 - What is an `OperationOutcome`, and when does HAPI return one?
 
-**The bug to fix:** The default path in `main()` is `"./synthea/output/fhir"` but Synthea writes to `./output/fhir`. Update the default to `"./data/fhir"` (consistent with the new folder structure you created in Phase 0).
-
-### Step 1.4 — Run the loader and triage any failures
+### Step 1.5 — Run the loader and triage any failures
 
 Run the loader against your generated data. On the first run, expect some failures — they are the learning. For each `FAIL` line:
 
@@ -741,7 +822,7 @@ Common first-run failures and their causes:
 - Required field missing: Synthea generated data that doesn't fully satisfy the profile.
 - Timeout: HAPI is still warming up — increase the `httpx.Client(timeout=...)` value.
 
-### Step 1.5 — Verify the load
+### Step 1.6 — Verify the load
 
 After loading, confirm the data is there:
 
@@ -836,6 +917,11 @@ Produce a combined table: resource type → system → count. This is the artifa
 > **Role relevance:** This notebook is a concrete deliverable. In an interview, describe it: "I built a terminology census that runs across the full resource set, identifies CodeSystem anomalies, and produces a table I can share with the customer team." That maps directly to "investigate issues, validate integrations."
 
 ---
+
+<br><br><br><br><br><br><br><br><br><br>
+<br><br><br><br><br><br><br><br><br><br>
+<br><br><br><br><br><br><br><br><br><br>
+<br><br><br><br><br><br><br><br>
 
 ## Phase 3 — pytest Data-Quality Suite
 

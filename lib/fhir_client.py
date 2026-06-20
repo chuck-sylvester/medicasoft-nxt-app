@@ -13,7 +13,13 @@ import httpx
 load_dotenv()
 
 FHIR_BASE_URL = os.getenv("FHIR_BASE_URL", "http://localhost:8080/fhir")
-HEADERS = {"Content-Type": "application/fhir+json", "Accept": "application/fhir+json"}
+
+# GET requests: Accept only — do not send Content-Type on body-less requests.
+# HAPI's pagination URL (GET /fhir?_getpages=...) returns 400 if Content-Type is present.
+HEADERS = {"Accept": "application/fhir+json"}
+
+# POST/PUT requests: both headers required.
+POST_HEADERS = {"Content-Type": "application/fhir+json", "Accept": "application/fhir+json"}
 
 
 def get_all(client: httpx.Client, resource_type: str, **params) -> list[dict]:
@@ -21,9 +27,11 @@ def get_all(client: httpx.Client, resource_type: str, **params) -> list[dict]:
     params.setdefault("_count", 200)
     url, out = f"{FHIR_BASE_URL}/{resource_type}", []
     while url:
-        bundle = client.get(url, params=params, headers=HEADERS).raise_for_status().json()
+        response = client.get(url, params=params, headers=HEADERS)
+        response.raise_for_status()
+        bundle = response.json()
         out += [e["resource"] for e in bundle.get("entry", [])]
-        params = {}  # 'next' link already carries the cursor
+        params = None  # next link already carries the cursor; params={} strips query params in httpx
         url = next((l["url"] for l in bundle.get("link", []) if l["relation"] == "next"), None)
     return out
 
@@ -36,5 +44,5 @@ def server_validate(client: httpx.Client, resource: dict) -> dict:
     return client.post(
         f"{FHIR_BASE_URL}/{rt}/$validate",
         json=resource,
-        headers=HEADERS,
+        headers=POST_HEADERS,
     ).json()

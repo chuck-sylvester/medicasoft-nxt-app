@@ -2,8 +2,9 @@
 """Load Synthea FHIR R4 *transaction* bundles into the local HAPI server.
 
 Usage:
-    python load_synthea.py ./synthea/output/fhir
-    FHIR_BASE_URL=http://localhost:8080/fhir python load_synthea.py <dir>
+    python scripts/load_synthea.py                   # uses ./data/fhir and FHIR_BASE_URL from .env
+    python scripts/load_synthea.py <dir>             # explicit bundle directory
+    FHIR_BASE_URL=https://hapi.fhir.org/baseR4 python scripts/load_synthea.py  # override server
 
 Why the ordering matters: Synthea writes two infrastructure bundles
 (hospitalInformation*.json, practitionerInformation*.json) that the patient
@@ -18,7 +19,7 @@ import sys
 
 import httpx
 
-from lib.fhir_client import FHIR_BASE_URL, HEADERS
+from lib.fhir_client import FHIR_BASE_URL, POST_HEADERS
 
 
 def ordered_files(d: str) -> list[str]:
@@ -37,18 +38,22 @@ def ordered_files(d: str) -> list[str]:
 def post_bundle(client: httpx.Client, path: str) -> httpx.Response:
     with open(path) as f:
         bundle = json.load(f)
-    if bundle.get("type") != "transaction":
+    bundle_type = bundle.get("type")
+    if bundle_type not in ("transaction", "batch"):
         raise ValueError(
-            f"{os.path.basename(path)} is a '{bundle.get('type')}' bundle; "
-            "re-run Synthea with --exporter.fhir.transaction_bundle true"
+            f"{os.path.basename(path)} is a '{bundle_type}' bundle; expected transaction or batch"
         )
-    resp = client.post(FHIR_BASE_URL, json=bundle, headers=HEADERS)
+    # Synthea infrastructure bundles (hospitalInformation, practitionerInformation) use
+    # 'batch' type in many versions regardless of --exporter.fhir.transaction_bundle true.
+    # HAPI accepts both types. Patient bundles should always be 'transaction' so that a
+    # reference resolution failure rolls back the entire bundle atomically.
+    resp = client.post(FHIR_BASE_URL, json=bundle, headers=POST_HEADERS)
     resp.raise_for_status()
     return resp
 
 
 def main() -> None:
-    out_dir = sys.argv[1] if len(sys.argv) > 1 else "./synthea/output/fhir"
+    out_dir = sys.argv[1] if len(sys.argv) > 1 else "./data/fhir"
     files = ordered_files(out_dir)
     if not files:
         sys.exit(f"No bundles found in {out_dir}")
