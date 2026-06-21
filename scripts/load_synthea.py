@@ -2,15 +2,14 @@
 """Load Synthea FHIR R4 *transaction* bundles into the local HAPI server.
 
 Usage:
-    python scripts/load_synthea.py                   # uses ./data/fhir and FHIR_BASE_URL from .env
-    python scripts/load_synthea.py <dir>             # explicit bundle directory
+    python scripts/load_synthea.py                 # uses ./data/fhir and FHIR_BASE_URL from .env
+    python scripts/load_synthea.py <dir>           # explicit bundle directory
     FHIR_BASE_URL=https://hapi.fhir.org/baseR4 python scripts/load_synthea.py  # override server
 
 Why the ordering matters: Synthea writes two infrastructure bundles
 (hospitalInformation*.json, practitionerInformation*.json) that the patient
 bundles reference. Load those first or the patient transactions fail their
-reference resolution -- exactly the kind of "ingestion ordering" bug you'd
-triage on the job.
+reference resolution.
 """
 import glob
 import json

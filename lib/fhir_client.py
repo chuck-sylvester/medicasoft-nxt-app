@@ -4,18 +4,15 @@
 # A shared module that performs a few essential tasks
 # ---------------------------------------------------------------------
 
-# Imports
 import os
 from dotenv import load_dotenv
 import httpx
 
-# Load environment variables from .env
 load_dotenv()
 
 FHIR_BASE_URL = os.getenv("FHIR_BASE_URL", "http://localhost:8080/fhir")
 
 # GET requests: Accept only — do not send Content-Type on body-less requests.
-# HAPI's pagination URL (GET /fhir?_getpages=...) returns 400 if Content-Type is present.
 HEADERS = {"Accept": "application/fhir+json"}
 
 # POST/PUT requests: both headers required.

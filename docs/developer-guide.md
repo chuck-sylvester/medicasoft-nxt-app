@@ -11,24 +11,26 @@ This guide is the single reference for building, understanding, and extending th
 
 ## Table of Contents
 
-1. [Architecture Overview](#1-architecture-overview)
-2. [How HAPI Relates to NXT](#2-how-hapi-relates-to-nxt)
-3. [FHIR Concepts at the Depth This Role Requires](#3-fhir-concepts-at-the-depth-this-role-requires)
-4. [Project Structure](#4-project-structure)
-5. [Technology Stack Decisions](#5-technology-stack-decisions)
-6. [Phase 0 — Foundation](#phase-0--foundation)
-7. [Phase 1 — Data Generation and Loading](#phase-1--data-generation-and-loading)
-8. [Phase 2 — REST API Exploration and Validation](#phase-2--rest-api-exploration-and-validation)
-9. [Phase 3 — pytest Data-Quality Suite](#phase-3--pytest-data-quality-suite)
-10. [Phase 4 — DuckDB / SQL-on-FHIR Analytics](#phase-4--duckdb--sql-on-fhir-analytics)
-11. [Phase 5 — SMART-on-FHIR / OAuth2 with Keycloak](#phase-5--smart-on-fhir--oauth2-with-keycloak)
-12. [Phase 6 — C-CDA to FHIR Mapper](#phase-6--c-cda-to-fhir-mapper)
+1. [Architecture Overview](#1.-architecture-overview)
+2. [How HAPI Relates to NXT](#2.-how-hapi-relates-to-nxt)
+3. [FHIR Concepts at the Depth This Role Requires](#3.-fhir-concepts-at-the-depth-this-role-requires)
+4. [Project Structure](#4.-project-structure)
+5. [Technology Stack Decisions](#5.-technology-stack-decisions)
+6. [Phase 0 — Foundation](#phase-0-\--foundation)
+7. [Phase 1 — Data Generation and Loading](#phase-1-\--data-generation-and-loading)
+8. [Phase 2 — REST API Exploration and Validation](#phase-2-\--rest-api-exploration-and-validation)
+9. [Phase 3 — pytest Data-Quality Suite](#phase-3-\--pytest-data-quality-suite)
+10. [Phase 4 — DuckDB / SQL-on-FHIR Analytics](#phase-4-\--duckdb--sql-on-fhir-analytics)
+11. [Phase 5 — SMART-on-FHIR / OAuth2 with Keycloak](#phase-5-\--smart-on-fhir--oauth2-with-keycloak)
+12. [Phase 6 — C-CDA to FHIR Mapper](#phase-6-\--c-cda-to-fhir-mapper)
 
 ---
 
 ## 1. Architecture Overview
 
 ### Local environment
+
+<br><br><br><br>
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -79,6 +81,8 @@ Flow legend:
   2.  Python → HAPI      GET/POST /fhir/... with Authorization: Bearer <token>
   3.  HAPI   → Keycloak  GET /certs (JWKS — internal Docker network, port 8080)
 ```
+
+<br><br><br><br>
 
 ### What each layer does
 
@@ -503,6 +507,8 @@ Pin the version: `fhir.resources==7.*` for R4. The library separates R4 (`fhir.r
 
 DuckDB is an in-process analytical SQL engine. No server, no setup — just `import duckdb`. It reads FHIR JSON directly via `read_json_auto()` and supports lateral unnesting of FHIR's nested arrays. The SQL you write transfers nearly verbatim to Redshift or Snowflake. DuckDB's UNNEST syntax and Redshift's SUPER type / UNNEST differ slightly — note those differences as you go.
 
+<br><br>
+
 ### Jupyter Notebooks
 
 Notebooks run in the `.venv` kernel.  
@@ -514,15 +520,28 @@ python -m ipykernel install --user --name=nxt-lab
 
 This ensures notebooks use the project's venv. Notebooks import from `lib/` the same way scripts do. The `.pth` file created in Step 0.1 adds the project root to `sys.path` automatically, so no additional path configuration is needed in notebooks.
 
+**Verify the kernel is registered:**
+```bash
+jupyter kernelspec list
+```
+`nxt-lab` should appear in the output. To confirm it points to the project's `.venv` Python:
+```bash
+cat ~/Library/Jupyter/kernels/nxt-lab/kernel.json
+```
+The `argv[0]` value should be the path to `.venv/bin/python` inside the project directory.  
+
+In VS Code, open a `.ipynb` file and click **Select Kernel** (top right). Choose **Python Environments...** then select `.venv (3.12.13) .venv/bin/python`. VS Code displays the environment name rather than `nxt-lab` here.  
+
+The `nxt-lab` named kernel appears under **Jupyter Kernel...** instead, but both options use the same `.venv/bin/python` interpreter.
+
 <br><br><br><br><br><br><br><br><br><br>
 <br><br><br><br><br><br><br><br><br><br>
 <br><br><br><br><br><br><br><br><br><br>
-<br><br><br><br><br><br><br><br>
 
 # MedicaSoft NXT Lab
 Implementation
 
-## Phase 0 — Foundation
+## Phase 0 - Foundation
 
 *Goal: a clean, reproducible Python environment with shared infrastructure before writing any FHIR code.*
 
@@ -633,18 +652,22 @@ Move `load_synthea.py` and `validate.py` from the repo root into `scripts/`. Thi
 
 This is the most important step in Phase 0. Design a shared module that:
 
-1. Calls `load_dotenv()` at import time so `FHIR_BASE_URL` is always available from the environment.
+1. Calls `load_dotenv()` at import time so `FHIR_BASE_URL` is always available from the environment.  
+
 2. Defines `FHIR_BASE_URL` and `HEADERS` as module-level constants (or a simple config object).
-3. Implements `get_all(client, resource_type, **params) -> list[dict]` — the pagination helper from `validate.py`, now extracted so every script can import it. Key detail: the function must clear `params` after the first request, because HAPI encodes the full cursor into the `next` link URL — re-sending the original params on subsequent requests resets the cursor.
-4. Implements `server_validate(client, resource) -> dict` — posts to `/{resourceType}/$validate` and returns the OperationOutcome.
+
+3. Implements `get_all(client, resource_type, **params) -> list[dict]`
+   - A pagination helper.
+   - The function must clear `params` after the first request, because HAPI encodes the full cursor into the `next` link URL — re-sending the original params on subsequent requests resets the cursor.
+
+4. Implements `server_validate(client, resource) -> dict`
+   - Posts to `/{resourceType}/$validate` and returns the OperationOutcome.
 
 **Why `load_dotenv()` at module level, not inside `main()`**
 
 Calling `load_dotenv()` at the top of `lib/fhir_client.py` — outside any function — means it runs the first time Python imports the module, and only then (Python caches module imports). Any script or notebook that does `from lib.fhir_client import FHIR_BASE_URL` triggers the call automatically. You never need to call `load_dotenv()` in `load_synthea.py`, `validate.py`, or a notebook.
 
-Compare this to placing `load_dotenv()` inside `main()`: it would only run when the script is executed directly (`python scripts/validate.py`), not when the module is imported by a test or notebook. Module-level placement is more reliable for a shared library.
-
-Note also that `os.environ.get("FHIR_BASE_URL", "http://localhost:8080/fhir")` keeps a default value even though `load_dotenv()` is called first. The default is a safety net for environments where `.env` does not exist — such as CI pipelines that inject environment variables directly rather than via a file. It is not a fallback you expect to need in the local lab.
+Note that `os.environ.get("FHIR_BASE_URL", "http://localhost:8080/fhir")` keeps a default value even though `load_dotenv()` is called first. The default is a safety net for environments where `.env` does not exist. It is not a fallback you expect to need in the local lab.
 
 After this step, `validate.py` should import from `lib.fhir_client` rather than defining these locally.
 
@@ -678,7 +701,9 @@ Controls what Docker does when a container exits unexpectedly:
 
 `depends_on` declares the startup order Docker Compose must respect. The plain form (`depends_on: hapi-db`) only guarantees that `hapi-db` has *started* before `hapi-fhir` — not that Postgres is ready to accept connections. Databases take a few seconds to initialize after the container process starts, so plain ordering still produces race-condition failures.
 
-`condition: service_healthy` is stronger: Compose waits until the dependency's `healthcheck` reports success before starting the dependent service. For `hapi-fhir` the sequence is:
+`condition: service_healthy` is stronger: Compose waits until the dependency's `healthcheck` reports success before starting the dependent service.  
+
+For `hapi-fhir` the sequence is:
 
 1. `hapi-db` container starts
 2. Docker runs `pg_isready -U admin -d hapi` every 10 seconds (`interval`)
@@ -762,10 +787,21 @@ Note the Java version requirement (17+).
 Before running, understand what each flag does:
 
 - `-p 25` — generate 25 patients. Start with 5–10 on the first run for speed.
+
 - `-s 1234` — random seed for reproducibility. The same seed + same flags = identical output.
+
 - `--exporter.fhir.use_us_core_ig true` — activates the US Core IG template, which adds the race/ethnicity extensions and generates resource types that only appear with the IG on.
+
 - `--exporter.fhir.us_core_version 6.1.0` — pins the US Core version. 6.1.0 is the current version; earlier versions have different Must Support sets.
+
 - `--exporter.fhir.transaction_bundle true` — wraps output in `transaction` Bundles (required for `POST /fhir` ingestion). Without this flag, Synthea produces `collection` Bundles, which HAPI won't process as a transaction.
+
+- `Virginia "Fairfax"` — positional arguments that set the geographic scope of generated patients. The first value is the US state name (must match Synthea's built-in state list); the second, optional value is the city or county within that state. Synthea uses these to select realistic demographics, provider locations, and address data. Common variations:
+  - `Massachusetts` — no city; Synthea distributes patients across the whole state (default behavior if omitted entirely)
+  - `Massachusetts "Bedford"` — patients clustered around a specific city
+  - `California "Los Angeles"` — large urban population demographics
+  - `Texas "Austin"` — different regional disease prevalence and provider mix
+  - Omitting both arguments defaults to Massachusetts, which is Synthea's home state and has the most complete provider data
 
 Output lands in `./output/fhir/` **relative to the directory you run the jar from**. Synthea does not need to be run from inside the project — the jar can live anywhere on the machine.
 
@@ -811,7 +847,9 @@ Read the script fully. Answer these questions for yourself before running it:
 
 ### Step 1.5 — Run the loader and triage any failures
 
-Run the loader against your generated data. On the first run, expect some failures — they are the learning. For each `FAIL` line:
+Run the loader against the generated data. On first run, expect some failures — they are the learning.  
+
+For each `FAIL` line:
 
 1. Read the `OperationOutcome` `diagnostics` field.
 2. Identify the `severity` and `code`.
@@ -828,7 +866,7 @@ After loading, confirm the data is there:
 
 ```
 GET /fhir/Patient?_count=5
-GET /fhir/Patient/_count=1&_summary=count   ← returns just the total
+GET /fhir/Patient?_count=1&_summary=count   ← returns just the total
 ```
 
 The `_summary=count` parameter is a useful trick for getting a fast total without fetching full resources.
@@ -841,7 +879,7 @@ The `_summary=count` parameter is a useful trick for getting a fast total withou
 
 *Goal: build fluency with FHIR search semantics and the validation workflow, in both script and notebook form.*
 
-This phase runs in parallel tracks. The scripts track produces `validate.py` (refactored); the notebooks track produces exploratory notebooks that show your reasoning and findings as prose + code + output.
+This phase runs in parallel tracks. The scripts track produces `validate.py`; the notebooks track produces exploratory notebooks that show your reasoning and findings as prose + code + output.
 
 ### Step 2.1 — Refactor `validate.py`
 
@@ -917,11 +955,6 @@ Produce a combined table: resource type → system → count. This is the artifa
 > **Role relevance:** This notebook is a concrete deliverable. In an interview, describe it: "I built a terminology census that runs across the full resource set, identifies CodeSystem anomalies, and produces a table I can share with the customer team." That maps directly to "investigate issues, validate integrations."
 
 ---
-
-<br><br><br><br><br><br><br><br><br><br>
-<br><br><br><br><br><br><br><br><br><br>
-<br><br><br><br><br><br><br><br><br><br>
-<br><br><br><br><br><br><br><br>
 
 ## Phase 3 — pytest Data-Quality Suite
 
@@ -1348,6 +1381,10 @@ NXT production:
 The Parquet layer is where "FHIR data in motion" becomes "FHIR data at rest for analysis." Understanding what is in that layer — its schema, its statistics, its compression — is understanding the handoff point between the FHIR platform and the warehouse that the SE role straddles.
 
 ---
+
+<br><br><br><br><br><br><br><br><br><br>
+<br><br><br><br><br><br><br><br><br><br>
+<br><br><br><br><br><br><br><br><br><br>
 
 ## Phase 5 — SMART-on-FHIR / OAuth2 with Keycloak
 
