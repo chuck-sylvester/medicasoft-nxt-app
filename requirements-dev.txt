@@ -14,6 +14,9 @@ jupyter
 # After install, run: python -m ipykernel install --user --name=nxt-lab
 ipykernel
 
+# HTTP client for experimenting using notebooks
+requests
+
 # In-process analytical SQL engine
 duckdb
 
