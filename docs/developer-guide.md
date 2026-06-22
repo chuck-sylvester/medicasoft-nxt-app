@@ -893,7 +893,9 @@ Create this notebook to explore HAPI's REST surface interactively. Structure it 
 
 **Section A — CapabilityStatement**
 - Fetch and pretty-print the CapabilityStatement
+- Write a helper cell to print a summary of several CapabilityStatement data elements
 - Write a helper cell that extracts the list of supported search parameters for a given resource type
+- Write a helper cell that extracts a list of supported resources
 - Compare what's listed against what you'd expect from US Core 6.1.0
 
 **Section B — Basic search patterns**
